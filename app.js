@@ -118,6 +118,7 @@ function freshState() {
     titleIdx: 0,
     streak: 0,
     streakDay: -1,
+    journalRead: 0,
   };
 }
 
@@ -555,7 +556,69 @@ function updateHUD() {
   } else {
     mono.hidden = true;
   }
+  updateBadges();
+  updateCoach();
 }
+
+// pastilles d'alerte sur les onglets : « il se passe quelque chose ici »
+function setDot(tab, on) {
+  const t = document.querySelector(`.tab[data-tab="${tab}"]`);
+  if (!t) return;
+  let d = t.querySelector(".dot");
+  if (on && !d) { d = document.createElement("span"); d.className = "dot"; t.appendChild(d); }
+  if (!on && d) d.remove();
+}
+function updateBadges() {
+  setDot("journal", S.journal.length > (S.journalRead || 0));
+  setDot("empire", S.quests.items.some((q) => !q.done));
+  setDot("bourse", !!S.eventNow);
+}
+
+// le guide d'action : dit toujours la meilleure chose à faire maintenant
+let coachAction = null;
+function updateCoach() {
+  const el = $("#coach");
+  if (!S.onboarded || !$("#sheet").hidden || !$("#panel").hidden) { el.hidden = true; return; }
+  const ids = Object.keys(S.owned);
+  const pending = ids.reduce((a, id) => a + accrued(byId[id]), 0);
+  let txt = null, cls = "";
+
+  if (pending >= 1) {
+    txt = `🪙 Encaisser les loyers — +${fmt(pending)}`;
+    cls = "gain";
+    coachAction = collectAll;
+  } else if (!ids.length) {
+    const target = PLACES.filter((p) => !S.owned[p.id] && S.cash >= priceToPay(p))
+      .sort((a, b) => priceToPay(a) - priceToPay(b))[0];
+    if (target) {
+      txt = `🏠 Achetez votre premier commerce — dès ${fmt(priceToPay(target))}`;
+      coachAction = () => openSheet(target);
+    }
+  } else {
+    const t = monopolyTarget();
+    const next = t && PLACES.filter((p) => p.cat === t.cat && !S.owned[p.id])
+      .sort((a, b) => priceToPay(a) - priceToPay(b))[0];
+    if (next && S.cash >= priceToPay(next)) {
+      txt = `🎯 Le monopole des ${CAT_META[t.cat].plural} est à portée — ${next.name}`;
+      coachAction = () => openSheet(next);
+    } else if (S.eventNow) {
+      txt = "📈 Ça s'agite à la Bourse — allez voir";
+      coachAction = () => { setTab("bourse"); openPanel("bourse"); };
+    } else if (t) {
+      txt = `🎯 Monopole des ${CAT_META[t.cat].plural} : plus que ${t.total - t.mine} — économisez ${fmt(priceToPay(next))}`;
+      coachAction = next ? () => openSheet(next) : null;
+    }
+  }
+
+  if (txt) {
+    el.hidden = false;
+    el.textContent = txt;
+    el.className = cls;
+  } else {
+    el.hidden = true;
+  }
+}
+$("#coach").addEventListener("click", () => { if (coachAction) coachAction(); });
 
 let toastCount = 0;
 function toast(text, cls = "") {
@@ -612,8 +675,8 @@ function openSheet(p, silent = false) {
     const nextCost = o.level < 3 ? p.price * ECO.upCost[o.level] : null;
     body.innerHTML = `
       <div class="sheet-row">
-        <div class="stat">Loyer <b>${fmt(rentPerDay(p))}</b>/j</div>
-        <div class="stat">Niveau <b>${o.level ? ECO.upNames[o.level - 1] : "—"}</b></div>
+        <div class="stat">Rapporte <b>${fmt(rentPerDay(p))}</b>/jour</div>
+        ${o.level ? `<div class="stat">🏗️ <b>${ECO.upNames[o.level - 1]}</b></div>` : ""}
         ${hasMonopoly(p.cat) ? '<div class="stat">👑 <b>Monopole ×2</b></div>' : ""}
         ${inspected ? '<div class="stat">👔 <b>Tournée faite</b></div>' : ""}
       </div>
@@ -642,7 +705,7 @@ function openSheet(p, silent = false) {
     body.innerHTML = `
       <div class="sheet-row">
         <div class="stat">Prix <b>${fmt(cost)}</b>${npcOwned ? " (rachat ×1,5)" : ""}</div>
-        <div class="stat">Loyer <b>${fmt(p.price * ECO.rentDay)}</b>/j</div>
+        <div class="stat">Rapportera <b>${fmt(p.price * ECO.rentDay)}</b>/jour</div>
         ${npcOwned ? `<div class="stat">🏗️ <b>${NPC_NAME}</b></div>` : ""}
       </div>
       <div class="btn-row">
@@ -655,11 +718,13 @@ function openSheet(p, silent = false) {
     $("#a-goto")?.addEventListener("click", () => goTo(p));
   }
   if (!silent) map.flyTo({ center: [p.lon, p.lat], zoom: Math.max(map.getZoom(), 16), speed: 1.4 });
+  $("#coach").hidden = true;
 }
 
 $("#sheet-close").addEventListener("click", () => {
   $("#sheet").hidden = true;
   sheetPlace = null;
+  updateCoach();
 });
 
 $("#quest-chip").addEventListener("click", () => {
@@ -690,6 +755,7 @@ function renderPanel() {
         <h2>La Bourse</h2>
         <div class="session ${open ? "open" : ""}">${session}</div>
       </div>
+      <div class="panel-hint">Touchez une valeur pour voir sa courbe et acheter ou vendre. Les dividendes tombent à la clôture de 18h — détenir rapporte.</div>
       ${S.eventNow ? `<div class="news-item"><div class="date">EN CE MOMENT</div>${S.eventNow.head}</div>` : ""}
       ${Object.keys(TICKERS).map((sym) => {
         const st = S.stocks[sym], t = TICKERS[sym];
@@ -699,6 +765,7 @@ function renderPanel() {
         const posVal = st.shares * st.price;
         return `
         <div class="stock-row" data-sym="${sym}">
+          <span class="chev">${expandedSym === sym ? "▾" : "▸"}</span>
           <div class="stock-icon">${t.icon}</div>
           <div class="stock-name"><b>${t.name}</b>
             <span class="pos">${st.shares > 0 ? `Vous : ${st.shares} act. · ${fmt(posVal)}` : "Div " + (t.div * 100).toFixed(1) + " %/j"}</span>
@@ -821,12 +888,15 @@ function drawSpark(st) {
 function openPanel(tab) {
   panelTab = tab;
   $("#panel").hidden = false;
+  $("#coach").hidden = true;
+  if (tab === "journal") { S.journalRead = S.journal.length; save(); updateBadges(); }
   renderPanel();
 }
 function closePanel() {
   $("#panel").hidden = true;
   panelTab = null;
   setTab("carte");
+  updateCoach();
 }
 $("#panel-close").addEventListener("click", closePanel);
 

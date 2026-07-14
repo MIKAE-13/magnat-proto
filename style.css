@@ -463,3 +463,75 @@ body.night #tabs {
   font-size: 12px; font-weight: 800;
   letter-spacing: 0.04em;
 }
+
+/* ---------- Guide d'action ---------- */
+#coach {
+  position: fixed;
+  left: 50%; transform: translateX(-50%);
+  bottom: calc(88px + env(safe-area-inset-bottom));
+  z-index: 24;
+  border: 0; cursor: pointer;
+  background: var(--ink); color: var(--cream);
+  border-radius: 999px;
+  padding: 11px 18px;
+  font-size: 13.5px; font-weight: 800;
+  box-shadow: var(--shadow);
+  max-width: 90vw;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  animation: toast-pop 0.25s ease-out;
+}
+#coach.gain { background: var(--emerald); color: #fff; }
+body.night #coach { background: var(--card); color: var(--ink); border: 1px solid var(--line); }
+
+/* ---------- Pastilles d'alerte sur les onglets ---------- */
+.tab { position: relative; }
+.tab .dot {
+  position: absolute; top: 3px; right: 24%;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--coral);
+  box-shadow: 0 0 0 2px var(--card);
+}
+
+/* ---------- Bourse : affordances ---------- */
+.stock-row .chev { color: var(--ink-soft); font-size: 13px; width: 14px; }
+.panel-hint { color: var(--ink-soft); font-size: 12.5px; margin: 8px 0 4px; }
+
+/* ---------- Boutons : ne jamais tronquer ---------- */
+.btn { white-space: normal; line-height: 1.25; }
+
+/* ---------- Panneau dev : en haut à droite (ne chevauche plus la fiche) ---------- */
+#dev-panel {
+  bottom: auto;
+  top: calc(64px + env(safe-area-inset-top));
+}
+
+/* ---------- Petits écrans : tout doit rester lisible ---------- */
+@media (max-width: 430px) {
+  #worth-pill { flex-wrap: wrap; row-gap: 2px; padding: 8px 12px; }
+  .pill-label { display: none; }
+  #worth { font-size: 14.5px; }
+  .pill-cash { font-size: 12.5px; }
+  .delta-chip { font-size: 11px; padding: 2px 7px; }
+  #mono-chip { min-width: 0; width: min(76vw, 260px); }
+  #quest-chip { font-size: 11.5px; padding: 5px 10px; }
+  #sheet { padding: 13px 12px 12px; }
+  #sheet-title { font-size: 17px; }
+  #sheet-sub { font-size: 12px; }
+  .stat { font-size: 12px; padding: 6px 9px; }
+  .stat b { font-size: 13px; }
+  .btn { font-size: 13.5px; padding: 11px 10px; }
+  .btn-row { gap: 6px; }
+  #panel { left: 6px; right: 6px; padding: 14px 12px; }
+  #panel h2 { font-size: 19px; }
+  .stock-icon { font-size: 19px; width: 24px; }
+  .stock-name b { font-size: 13px; }
+  .stock-price b { font-size: 13px; }
+  .trade-row { flex-wrap: wrap; }
+  .trade-row .btn { flex: 1 1 42%; }
+  .quest-item { font-size: 13px; }
+  #dev-panel button { font-size: 11px; padding: 6px 7px; }
+  #coach { font-size: 12.5px; padding: 10px 14px; }
+}
+@media (max-height: 700px) {
+  #panel { top: calc(58px + env(safe-area-inset-top)); }
+}
