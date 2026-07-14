@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#F6F1E4">
+  <title>MAGNAT — Mouriès</title>
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="map"></div>
+
+  <!-- HUD haut -->
+  <header id="hud">
+    <div id="worth-pill">
+      <span class="pill-icon">🏛️</span>
+      <span class="pill-label">Patrimoine</span>
+      <span id="worth">—</span>
+      <span id="delta" class="delta-chip" hidden>↗ +0,0 %</span>
+      <span class="pill-sep">·</span>
+      <span class="pill-cash">💵 <span id="cash">—</span></span>
+    </div>
+    <div id="mono-chip" hidden>
+      <div id="mono-label">Monopole</div>
+      <div id="mono-segs"></div>
+    </div>
+  </header>
+
+  <!-- Bandeau gros titre (monopoles, événements) -->
+  <div id="headline" hidden>
+    <span class="headline-masthead">LA PLUS-VALUE</span>
+    <span id="headline-text"></span>
+  </div>
+
+  <!-- Toasts -->
+  <div id="toasts"></div>
+
+  <!-- Fiche lieu (bottom sheet) -->
+  <div id="sheet" hidden>
+    <button id="sheet-close" aria-label="Fermer">✕</button>
+    <div id="sheet-title">—</div>
+    <div id="sheet-sub">—</div>
+    <div id="sheet-body"></div>
+  </div>
+
+  <!-- Panneau dev / balade -->
+  <div id="dev-panel">
+    <button id="btn-sim" title="Se déplacer en touchant la carte">🚶 balade</button>
+    <button id="btn-speed" title="Accélérer le temps du jeu">⏩ ×1</button>
+    <button id="btn-theme" title="Forcer jour/nuit">🌗</button>
+    <button id="btn-reset" title="Recommencer la partie">🗑️</button>
+  </div>
+
+  <!-- Onglets -->
+  <nav id="tabs">
+    <button class="tab active" data-tab="carte"><span>🗺️</span>CARTE</button>
+    <button class="tab" data-tab="bourse"><span>📈</span>BOURSE</button>
+    <button class="tab" data-tab="journal"><span>📰</span>JOURNAL</button>
+    <button class="tab" data-tab="empire"><span>👑</span>EMPIRE</button>
+  </nav>
+
+  <!-- Panneaux modaux (bourse / journal / empire) -->
+  <div id="panel" hidden>
+    <button id="panel-close" aria-label="Fermer">✕</button>
+    <div id="panel-content"></div>
+  </div>
+
+  <!-- Onboarding -->
+  <div id="onboard">
+    <div id="onboard-card">
+      <div class="ob-title">MAGNAT</div>
+      <div class="ob-sub">République du Capital — Mouriès</div>
+      <p>Vous venez d'hériter de <b>50 000 ₣</b> et d'une ambition démesurée.</p>
+      <p>Achetez les commerces du village (à moins de 300 m — ou téléportez-vous
+         avec « S'y rendre »), encaissez les loyers, visez les <b>monopoles</b>,
+         spéculez à <b>la Bourse</b>, et devenez tout ce que vous détestez.</p>
+      <p>💡 Le bouton <b>⏩</b> accélère le temps pour tester : loyers, séances de
+         bourse et rivaux défilent.</p>
+      <button id="ob-gps" class="ob-btn primary">📍 Utiliser ma position</button>
+      <button id="ob-sim" class="ob-btn">🚶 Mode balade (toucher la carte pour se déplacer)</button>
+      <p class="ob-legal">Acte notarié fourni. Scrupules non inclus.</p>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <script src="places.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

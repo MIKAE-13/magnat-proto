@@ -1,0 +1,430 @@
+/* MAGNAT prototype — design system « Riviera Terminal »
+   Jour : Riviera solaire · Nuit (après la clôture de 18h) : Terminal */
+
+:root {
+  --cream: #F6F1E4;
+  --card: #FFFFFF;
+  --ink: #22262E;
+  --ink-soft: #6B7280;
+  --emerald: #0E9B62;
+  --emerald-soft: rgba(14, 155, 98, 0.14);
+  --mint: #5CE0A1;
+  --gold: #C99B2E;
+  --gold-bright: #E9C05C;
+  --coral: #E2604C;
+  --line: #E4DCC9;
+  --shadow: 0 8px 28px rgba(34, 38, 46, 0.16);
+  --salmon: #F6D9C8;
+}
+body.night {
+  --cream: #14171D;
+  --card: #21262F;
+  --ink: #EDEFF2;
+  --ink-soft: #9BA3AF;
+  --emerald: #5CE0A1;
+  --emerald-soft: rgba(92, 224, 161, 0.14);
+  --gold: #D4A94E;
+  --line: #323844;
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  --salmon: #3A2C24;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { height: 100%; margin: 0; overscroll-behavior: none; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  color: var(--ink);
+  background: var(--cream);
+  user-select: none;
+}
+#map { position: fixed; inset: 0; }
+.maplibregl-ctrl-attrib { font-size: 9px; opacity: 0.7; }
+
+/* ---------- HUD ---------- */
+#hud {
+  position: fixed;
+  top: calc(10px + env(safe-area-inset-top));
+  left: 12px; right: 12px;
+  display: flex; flex-direction: column; gap: 8px;
+  align-items: flex-start;
+  pointer-events: none;
+  z-index: 20;
+}
+#worth-pill {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 9px 16px 9px 12px;
+  box-shadow: var(--shadow);
+  font-weight: 700;
+}
+.pill-icon { font-size: 17px; }
+.pill-label { color: var(--ink-soft); font-weight: 600; font-size: 13px; }
+#worth { font-variant-numeric: tabular-nums; font-size: 16px; }
+
+#mono-chip {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  padding: 7px 12px 8px;
+  min-width: 210px;
+}
+#mono-label { font-size: 12.5px; font-weight: 700; margin-bottom: 5px; }
+#mono-bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+#mono-fill { height: 100%; width: 0%; background: var(--emerald); border-radius: 3px; transition: width 0.4s; }
+
+/* ---------- Gros titre ---------- */
+#headline {
+  position: fixed;
+  top: calc(96px + env(safe-area-inset-top));
+  left: 12px; right: 12px;
+  z-index: 30;
+  background: var(--salmon);
+  color: var(--ink);
+  border: 1px solid rgba(0,0,0,0.12);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 10px 14px;
+  font-size: 14px;
+  line-height: 1.35;
+  animation: slide-in 0.35s ease-out;
+}
+.headline-masthead {
+  display: block;
+  font-size: 10px; font-weight: 800; letter-spacing: 0.22em;
+  opacity: 0.65; margin-bottom: 3px;
+}
+#headline-text b { font-weight: 800; }
+@keyframes slide-in { from { transform: translateY(-16px); opacity: 0; } }
+
+/* ---------- Toasts ---------- */
+#toasts {
+  position: fixed;
+  bottom: calc(150px + env(safe-area-inset-bottom));
+  left: 0; right: 0;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  pointer-events: none; z-index: 40;
+}
+.toast {
+  background: var(--ink);
+  color: var(--cream);
+  border-radius: 999px;
+  padding: 8px 16px;
+  font-size: 13.5px; font-weight: 600;
+  box-shadow: var(--shadow);
+  animation: toast-pop 0.25s ease-out;
+  max-width: 86vw;
+}
+body.night .toast { background: var(--card); color: var(--ink); border: 1px solid var(--line); }
+.toast.gain { background: var(--emerald); color: #fff; }
+@keyframes toast-pop { from { transform: translateY(10px) scale(0.9); opacity: 0; } }
+
+/* ---------- Marqueurs : bâtiments 3D (la DA des maquettes) ---------- */
+.pmark {
+  position: relative;
+  display: flex; flex-direction: column; align-items: center;
+  cursor: pointer;
+  transform: scale(var(--mscale, 1));
+  transform-origin: bottom center;
+}
+.pmark img {
+  height: 60px; width: auto;
+  pointer-events: none;
+  filter: drop-shadow(0 6px 7px rgba(0, 0, 0, 0.35));
+  transition: filter 0.2s;
+}
+.pmark.big img { height: 76px; }
+.pmark:active img { filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.3)) brightness(1.08); }
+.pmark.owned img {
+  filter: drop-shadow(0 0 9px rgba(14, 155, 98, 0.75)) drop-shadow(0 6px 7px rgba(0, 0, 0, 0.3));
+}
+body.night .pmark.owned img {
+  filter: drop-shadow(0 0 10px rgba(92, 224, 161, 0.85)) drop-shadow(0 6px 7px rgba(0, 0, 0, 0.45));
+}
+.pmark.owned::after {
+  content: "";
+  position: absolute;
+  bottom: -7px; left: 50%; transform: translateX(-50%);
+  width: 82px; height: 26px;
+  border: 3px solid var(--emerald);
+  border-radius: 50%;
+  opacity: 0.8;
+  box-shadow: 0 0 14px 2px var(--emerald-soft);
+  pointer-events: none;
+}
+.pmark.npc img { filter: saturate(0.4) contrast(0.95) drop-shadow(0 6px 7px rgba(0, 0, 0, 0.35)); }
+.pmark .tag {
+  margin-top: 3px;
+  background: var(--card);
+  border: 1.5px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 11px; font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+  color: var(--ink-soft);
+  z-index: 1;
+}
+.pmark .tag[hidden] { display: none; }
+.pmark.affordable .tag { border-color: var(--gold); color: var(--ink); }
+.pmark.npc .tag { border-color: var(--coral); color: var(--coral); }
+.pmark.owned .tag { border-color: var(--emerald); color: var(--emerald); }
+.pmark .coin {
+  position: absolute; top: -16px; right: 6px;
+  font-size: 17px;
+  animation: coin-bob 1.2s ease-in-out infinite;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.3));
+}
+@keyframes coin-bob { 50% { transform: translateY(-5px); } }
+
+.player-dot {
+  width: 18px; height: 18px; border-radius: 50%;
+  background: #2E7CF6; border: 3px solid #fff;
+  box-shadow: 0 0 0 6px rgba(46, 124, 246, 0.25), 0 2px 8px rgba(0,0,0,0.35);
+}
+
+/* pièce qui s'envole à la collecte */
+.fly-coin {
+  position: fixed; z-index: 60; font-size: 22px; pointer-events: none;
+  animation: fly 0.9s ease-in forwards;
+}
+@keyframes fly {
+  30% { transform: translateY(-40px) scale(1.15); opacity: 1; }
+  100% { transform: translateY(-120px) scale(0.6); opacity: 0; }
+}
+
+/* ---------- Fiche lieu ---------- */
+#sheet {
+  position: fixed;
+  left: 10px; right: 10px;
+  bottom: calc(78px + env(safe-area-inset-bottom));
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  padding: 16px 16px 14px;
+  z-index: 25;
+  animation: sheet-up 0.22s ease-out;
+}
+@keyframes sheet-up { from { transform: translateY(24px); opacity: 0; } }
+#sheet-close {
+  position: absolute; top: 10px; right: 10px;
+  border: 0; background: var(--line); color: var(--ink);
+  width: 26px; height: 26px; border-radius: 50%;
+  font-size: 12px; cursor: pointer;
+}
+#sheet-title { font-size: 19px; font-weight: 800; padding-right: 30px; }
+#sheet-sub { color: var(--ink-soft); font-size: 13px; margin: 2px 0 10px; }
+.sheet-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.stat {
+  background: var(--cream);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 7px 11px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.stat b { font-size: 14.5px; }
+.btn {
+  border: 0; border-radius: 12px;
+  padding: 12px 18px;
+  font-size: 15px; font-weight: 800;
+  cursor: pointer;
+  flex: 1;
+  color: #fff; background: var(--emerald);
+  box-shadow: 0 4px 12px rgba(14, 155, 98, 0.35);
+}
+.btn:disabled { background: var(--line); color: var(--ink-soft); box-shadow: none; }
+.btn.gold { background: var(--gold); box-shadow: 0 4px 12px rgba(201, 155, 46, 0.35); }
+.btn.ghost { background: transparent; color: var(--emerald); border: 1.5px solid var(--emerald); box-shadow: none; }
+.btn-row { display: flex; gap: 8px; margin-top: 10px; }
+.hint { color: var(--ink-soft); font-size: 12.5px; margin-top: 8px; }
+
+/* ---------- Onglets ---------- */
+#tabs {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  display: flex;
+  background: var(--card);
+  border-top: 1px solid var(--line);
+  padding: 6px 8px calc(8px + env(safe-area-inset-bottom));
+  z-index: 30;
+}
+.tab {
+  flex: 1;
+  border: 0; background: transparent;
+  color: var(--ink-soft);
+  font-size: 10.5px; font-weight: 800; letter-spacing: 0.08em;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 5px 0;
+  cursor: pointer;
+  border-radius: 10px;
+}
+.tab span { font-size: 19px; }
+.tab.active { color: var(--emerald); background: var(--emerald-soft); }
+
+/* ---------- Panneau ---------- */
+#panel {
+  position: fixed;
+  left: 10px; right: 10px;
+  top: calc(70px + env(safe-area-inset-top));
+  bottom: calc(78px + env(safe-area-inset-bottom));
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  z-index: 35;
+  padding: 18px;
+  overflow-y: auto;
+  animation: sheet-up 0.22s ease-out;
+}
+#panel-close {
+  position: sticky; top: 0; float: right;
+  border: 0; background: var(--line); color: var(--ink);
+  width: 28px; height: 28px; border-radius: 50%;
+  font-size: 13px; cursor: pointer; z-index: 2;
+}
+#panel h2 { margin: 4px 0 4px; font-size: 22px; }
+#panel .panel-sub { color: var(--ink-soft); font-size: 13.5px; margin-bottom: 14px; }
+.prop-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 2px;
+  border-bottom: 1px solid var(--line);
+  font-size: 14.5px;
+  cursor: pointer;
+}
+.prop-row .sub { color: var(--ink-soft); font-size: 12px; }
+.prop-row .val { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--emerald); }
+.news-item { padding: 10px 2px; border-bottom: 1px solid var(--line); font-size: 14px; line-height: 1.4; }
+.news-item .date { color: var(--ink-soft); font-size: 11.5px; font-weight: 700; letter-spacing: 0.06em; }
+.locked { text-align: center; padding: 40px 16px; color: var(--ink-soft); }
+.locked .big { font-size: 44px; margin-bottom: 10px; }
+.locked b { color: var(--ink); }
+
+/* ---------- Dev panel ---------- */
+#dev-panel {
+  position: fixed;
+  right: 10px;
+  bottom: calc(150px + env(safe-area-inset-bottom));
+  display: flex; flex-direction: column; gap: 6px;
+  z-index: 20;
+}
+#dev-panel button {
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink);
+  border-radius: 10px;
+  padding: 7px 9px;
+  font-size: 12px; font-weight: 700;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+#dev-panel button.on { background: var(--emerald); color: #fff; border-color: var(--emerald); }
+
+/* ---------- Onboarding ---------- */
+#onboard {
+  position: fixed; inset: 0;
+  background: rgba(20, 23, 29, 0.55);
+  backdrop-filter: blur(4px);
+  z-index: 100;
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+}
+#onboard-card {
+  background: var(--card);
+  border-radius: 20px;
+  max-width: 380px;
+  padding: 26px 22px 18px;
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+.ob-title { font-size: 34px; font-weight: 900; letter-spacing: 0.12em; color: var(--emerald); }
+.ob-sub { font-size: 12px; font-weight: 700; letter-spacing: 0.18em; color: var(--gold); text-transform: uppercase; margin: 2px 0 14px; }
+#onboard-card p { font-size: 14.5px; line-height: 1.5; color: var(--ink); text-align: left; }
+.ob-btn {
+  display: block; width: 100%;
+  margin-top: 10px;
+  border: 1.5px solid var(--emerald);
+  background: transparent; color: var(--emerald);
+  border-radius: 12px;
+  padding: 12px;
+  font-size: 14.5px; font-weight: 800;
+  cursor: pointer;
+}
+.ob-btn.primary { background: var(--emerald); color: #fff; }
+.ob-legal { color: var(--ink-soft); font-size: 11.5px !important; text-align: center !important; margin-bottom: 0; }
+
+/* ---------- HUD : liquidités ---------- */
+.pill-sep { color: var(--ink-soft); }
+.pill-cash { font-size: 13.5px; font-weight: 700; color: var(--emerald); font-variant-numeric: tabular-nums; }
+
+/* ---------- Bourse ---------- */
+.bourse-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  flex-wrap: wrap; gap: 4px;
+  padding: 4px 2px 12px;
+  border-bottom: 2px solid var(--ink);
+}
+.bourse-head .session { font-size: 12px; font-weight: 700; color: var(--ink-soft); }
+.bourse-head .session.open { color: var(--emerald); }
+.stock-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 11px 2px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+.stock-icon { font-size: 22px; width: 30px; text-align: center; }
+.stock-name { flex: 1; min-width: 0; }
+.stock-name b { font-size: 14.5px; display: block; }
+.stock-name .pos { font-size: 11.5px; color: var(--ink-soft); }
+.stock-price { text-align: right; font-variant-numeric: tabular-nums; }
+.stock-price b { font-size: 14.5px; display: block; }
+.delta { font-size: 12.5px; font-weight: 800; }
+.delta.up { color: var(--emerald); }
+.delta.down { color: var(--coral); }
+.delta.halt { color: var(--gold); }
+.stock-detail {
+  background: var(--cream);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  margin: 8px 0 10px;
+}
+.stock-detail canvas { width: 100%; height: 56px; display: block; margin-bottom: 8px; }
+.stock-detail .meta { font-size: 12.5px; color: var(--ink-soft); margin-bottom: 10px; }
+.trade-row { display: flex; gap: 6px; }
+.trade-row .btn { padding: 10px 6px; font-size: 13px; }
+.trade-row .btn.sell { background: var(--coral); box-shadow: 0 4px 12px rgba(226, 96, 76, 0.3); }
+.trade-row .btn.sell:disabled { background: var(--line); box-shadow: none; }
+.proto-note { color: var(--ink-soft); font-size: 11.5px; text-align: center; padding: 14px 8px 4px; }
+
+/* ---------- HUD : delta du jour & jauge à segments (maquettes H3) ---------- */
+.delta-chip {
+  background: var(--emerald-soft);
+  color: var(--emerald);
+  font-size: 12px; font-weight: 800;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-variant-numeric: tabular-nums;
+}
+.delta-chip.down { background: rgba(226, 96, 76, 0.14); color: var(--coral); }
+#mono-segs { display: flex; gap: 3px; }
+#mono-segs .seg { height: 6px; flex: 1; border-radius: 3px; background: var(--line); }
+#mono-segs .seg.on { background: var(--emerald); }
+
+/* ---------- Nuit : verre fumé (maquette H4) ---------- */
+body.night #sheet,
+body.night #worth-pill,
+body.night #mono-chip {
+  background: rgba(33, 38, 47, 0.86);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+body.night #tabs {
+  background: rgba(26, 30, 38, 0.92);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
