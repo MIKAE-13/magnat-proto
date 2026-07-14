@@ -535,3 +535,73 @@ body.night #coach { background: var(--card); color: var(--ink); border: 1px soli
 @media (max-height: 700px) {
   #panel { top: calc(58px + env(safe-area-inset-top)); }
 }
+
+/* ---------- BOURSE v2 : l'écran des maquettes H1/H2 ---------- */
+.bourse-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+.bourse-top h2 { margin: 0; letter-spacing: 0.03em; }
+.close-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1.5px solid var(--gold);
+  color: var(--gold);
+  border-radius: 999px;
+  padding: 5px 13px;
+  font-size: 12px; font-weight: 800;
+  white-space: nowrap;
+}
+.index-row { display: flex; align-items: baseline; gap: 10px; margin: 4px 0 0; }
+.index-val { font-size: 27px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.index-delta { font-size: 14.5px; font-weight: 800; }
+#index-chart { width: 100%; height: 150px; display: block; margin: 6px 0 14px; }
+.up { color: var(--emerald); }
+.down { color: var(--coral); }
+.halt { color: var(--gold); }
+
+.event-banner {
+  display: flex; align-items: center; gap: 8px;
+  background: rgba(226, 96, 76, 0.12);
+  border: 1px solid rgba(226, 96, 76, 0.5);
+  color: var(--coral);
+  border-radius: 12px;
+  padding: 9px 12px;
+  font-size: 13px; font-weight: 700;
+  margin-bottom: 12px;
+}
+
+.stock-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+body.night .stock-card {
+  background: rgba(35, 41, 52, 0.8);
+  border-color: rgba(212, 169, 78, 0.38);
+}
+.sc-top { display: flex; align-items: center; gap: 12px; }
+.sc-icon { width: 46px; height: 46px; object-fit: contain; filter: drop-shadow(0 3px 4px rgba(0,0,0,0.25)); }
+.sc-name { flex: 1; min-width: 0; }
+.sc-name b { display: block; font-size: 14.5px; letter-spacing: 0.03em; }
+.sc-name .sc-pos { font-size: 11.5px; color: var(--ink-soft); }
+.sc-right { text-align: right; }
+.sc-right .sc-delta { font-size: 17px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.sc-right .sc-price { font-size: 11.5px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.sc-bottom { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.sc-spark { width: 92px; height: 28px; }
+.div-chip {
+  border: 1px solid var(--gold); color: var(--gold);
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 11px; font-weight: 800;
+  white-space: nowrap;
+}
+.sc-pnl { margin-left: auto; font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.sc-detail { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 10px; }
+.sc-detail .meta { font-size: 12.5px; color: var(--ink-soft); margin-bottom: 10px; }
+@media (max-width: 430px) {
+  .index-val { font-size: 23px; }
+  .sc-icon { width: 40px; height: 40px; }
+  .sc-spark { width: 74px; }
+}

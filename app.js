@@ -119,6 +119,8 @@ function freshState() {
     streak: 0,
     streakDay: -1,
     journalRead: 0,
+    indexHist: [35_420],
+    indexDayOpen: 35_420,
   };
 }
 
@@ -398,6 +400,7 @@ function stockTick() {
 
     if (!we && hod === 9) {
       for (const sym in S.stocks) S.stocks[sym].dayOpen = S.stocks[sym].price;
+      S.indexDayOpen = indexValue();
     }
 
     if (!we && hod >= 9 && hod < 18) {
@@ -414,6 +417,8 @@ function stockTick() {
         }
       }
       if (S.eventNow && --S.eventNow.hoursLeft <= 0) S.eventNow = null;
+      S.indexHist.push(Math.round(indexValue()));
+      if (S.indexHist.length > 96) S.indexHist.shift();
     }
 
     if (!we && hod === 18) {
@@ -438,6 +443,13 @@ function marketOpen() {
   const H = Math.floor(S.gameMs / HOUR);
   const hod = (9 + H) % 24;
   return !isWeekend() && hod >= 9 && hod < 18;
+}
+
+// indice global : moyenne de la cote, exprimée en points (base 35 420)
+function indexValue() {
+  const syms = Object.keys(S.stocks);
+  const mean = syms.reduce((a, s) => a + S.stocks[s].price, 0) / syms.length;
+  return mean * 354.2;
 }
 
 function trade(sym, qty) {
@@ -746,52 +758,71 @@ function renderPanel() {
     const H = Math.floor(S.gameMs / HOUR);
     const hod = (9 + H) % 24;
     const open = marketOpen();
-    const session = open
-      ? `SÉANCE OUVERTE — clôture dans ${18 - hod} h`
-      : isWeekend() ? "FERMÉ — le week-end appartient au terrain"
-      : `FERMÉ — ouverture ${hod < 9 ? "à 9h" : "demain 9h"}`;
+    const chipTxt = open
+      ? `🕐 Clôture dans ${18 - hod} h`
+      : isWeekend() ? "🕐 Week-end — fermé"
+      : hod < 9 ? "🕐 Ouverture à 9h" : "🕐 Fermé — demain 9h";
+    const idx = indexValue();
+    const idxD = S.indexDayOpen > 0 ? (idx / S.indexDayOpen - 1) * 100 : 0;
+    const pts = Math.round(idx).toLocaleString("fr-FR");
+
     c.innerHTML = `
-      <div class="bourse-head">
-        <h2>La Bourse</h2>
-        <div class="session ${open ? "open" : ""}">${session}</div>
+      <div class="bourse-top">
+        <h2>LA BOURSE</h2>
+        <span class="close-chip">${chipTxt}</span>
       </div>
-      <div class="panel-hint">Touchez une valeur pour voir sa courbe et acheter ou vendre. Les dividendes tombent à la clôture de 18h — détenir rapporte.</div>
-      ${S.eventNow ? `<div class="news-item"><div class="date">EN CE MOMENT</div>${S.eventNow.head}</div>` : ""}
+      <div class="index-row">
+        <span class="index-val">${pts} pts</span>
+        <span class="index-delta ${idxD >= 0 ? "up" : "down"}">${idxD >= 0 ? "↗ +" : "↘ "}${Math.abs(idxD).toFixed(1).replace(".", ",")} %</span>
+      </div>
+      <canvas id="index-chart" width="680" height="300"></canvas>
+      ${S.eventNow ? `<div class="event-banner">🚨 ${S.eventNow.head}</div>` : ""}
       ${Object.keys(TICKERS).map((sym) => {
         const st = S.stocks[sym], t = TICKERS[sym];
         const delta = (st.price / st.dayOpen - 1) * 100;
         const cls = st.halted > 0 ? "halt" : delta >= 0 ? "up" : "down";
-        const dTxt = st.halted > 0 ? "⛔ suspendu" : `${delta >= 0 ? "+" : ""}${delta.toFixed(1)} %`;
-        const posVal = st.shares * st.price;
+        const dTxt = st.halted > 0 ? "⛔" : `${delta >= 0 ? "+" : "−"}${Math.abs(delta).toFixed(1).replace(".", ",")} %`;
+        const pnl = st.shares * (st.price - st.dayOpen);
         return `
-        <div class="stock-row" data-sym="${sym}">
-          <span class="chev">${expandedSym === sym ? "▾" : "▸"}</span>
-          <div class="stock-icon">${t.icon}</div>
-          <div class="stock-name"><b>${t.name}</b>
-            <span class="pos">${st.shares > 0 ? `Vous : ${st.shares} act. · ${fmt(posVal)}` : "Div " + (t.div * 100).toFixed(1) + " %/j"}</span>
+        <div class="stock-card" data-sym="${sym}">
+          <div class="sc-top">
+            <img class="sc-icon" src="assets/stocks/${sym.toLowerCase()}.png" alt="">
+            <div class="sc-name">
+              <b>${t.name}</b>
+              <span class="sc-pos">${st.shares > 0
+                ? `Vous : ${st.shares} actions · ${fmt(st.shares * st.price)}`
+                : t.desc}</span>
+            </div>
+            <div class="sc-right">
+              <div class="sc-delta ${cls}">${dTxt}</div>
+              <div class="sc-price">${st.price.toFixed(2).replace(".", ",")} ₣</div>
+            </div>
           </div>
-          <div class="stock-price"><b>${st.price.toFixed(2).replace(".", ",")} ₣</b>
-            <span class="delta ${cls}">${dTxt}</span>
+          <div class="sc-bottom">
+            <canvas class="sc-spark" data-spark="${sym}" width="184" height="56"></canvas>
+            <span class="div-chip">Div ${(t.div * 100).toFixed(1).replace(".", ",")} %/j</span>
+            ${st.shares > 0 && Math.abs(pnl) >= 1
+              ? `<span class="sc-pnl ${pnl >= 0 ? "up" : "down"}">${pnl >= 0 ? "+" : "−"}${fmt(Math.abs(pnl))} auj.</span>`
+              : ""}
           </div>
-        </div>
-        ${expandedSym === sym ? `
-        <div class="stock-detail">
-          <canvas id="spark" width="600" height="112"></canvas>
-          <div class="meta">${t.desc} · Dividende ${(t.div * 100).toFixed(1)} %/j à la clôture</div>
-          <div class="trade-row">
-            <button class="btn" data-trade="10"  ${S.cash >= 10 * st.price ? "" : "disabled"}>Acheter ×10</button>
-            <button class="btn" data-trade="100" ${S.cash >= 100 * st.price ? "" : "disabled"}>×100</button>
-            <button class="btn sell" data-trade="-10" ${st.shares > 0 ? "" : "disabled"}>Vendre ×10</button>
-            <button class="btn sell" data-trade="${-st.shares}" ${st.shares > 0 ? "" : "disabled"}>Tout</button>
-          </div>
-        </div>` : ""}`;
+          ${expandedSym === sym ? `
+          <div class="sc-detail">
+            <div class="meta">${t.desc} — dividendes versés à la clôture de 18h.</div>
+            <div class="trade-row">
+              <button class="btn" data-trade="10"  ${S.cash >= 10 * st.price ? "" : "disabled"}>Acheter ×10</button>
+              <button class="btn" data-trade="100" ${S.cash >= 100 * st.price ? "" : "disabled"}>×100</button>
+              <button class="btn sell" data-trade="-10" ${st.shares > 0 ? "" : "disabled"}>Vendre ×10</button>
+              <button class="btn sell" data-trade="${-st.shares}" ${st.shares > 0 ? "" : "disabled"}>Tout</button>
+            </div>
+          </div>` : ""}
+        </div>`;
       }).join("")}
       <div class="proto-note">Prototype : bourse déverrouillée d'office (en prod : après le premier monopole).<br>
       Économie simulée — en production, les cours réagiront à l'activité réelle des joueurs.</div>`;
 
-    c.querySelectorAll(".stock-row").forEach((row) =>
-      row.addEventListener("click", () => {
-        expandedSym = expandedSym === row.dataset.sym ? null : row.dataset.sym;
+    c.querySelectorAll(".stock-card").forEach((card) =>
+      card.addEventListener("click", () => {
+        expandedSym = expandedSym === card.dataset.sym ? null : card.dataset.sym;
         renderPanel();
       }));
     c.querySelectorAll("[data-trade]").forEach((b) =>
@@ -799,7 +830,12 @@ function renderPanel() {
         e.stopPropagation();
         trade(expandedSym, parseInt(b.dataset.trade, 10));
       }));
-    if (expandedSym) drawSpark(S.stocks[expandedSym]);
+
+    drawIndexChart();
+    c.querySelectorAll(".sc-spark").forEach((cv) => {
+      const st = S.stocks[cv.dataset.spark];
+      drawSpark(cv, st.hist.slice(-30).concat(st.price));
+    });
   }
 
   else if (panelTab === "journal") {
@@ -861,18 +897,18 @@ function renderPanel() {
   $("#panel").scrollTop = scroll;
 }
 
-function drawSpark(st) {
-  const cv = document.getElementById("spark");
-  if (!cv) return;
+// petite courbe d'une carte de valeur
+function drawSpark(cv, data) {
+  if (!cv || data.length < 2) return;
   const ctx = cv.getContext("2d");
-  const data = st.hist.slice(-60).concat(st.price);
   const min = Math.min(...data), max = Math.max(...data);
   const range = max - min || 1;
-  const W = cv.width, Hh = cv.height, pad = 8;
+  const W = cv.width, Hh = cv.height, pad = 5;
   ctx.clearRect(0, 0, W, Hh);
   const up = data[data.length - 1] >= data[0];
   ctx.strokeStyle = up ? "#0E9B62" : "#E2604C";
-  ctx.lineWidth = 3;
+  ctx.lineWidth = 4;
+  ctx.lineJoin = "round";
   ctx.beginPath();
   data.forEach((v, i) => {
     const x = pad + (i / (data.length - 1)) * (W - 2 * pad);
@@ -880,9 +916,64 @@ function drawSpark(st) {
     i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
   });
   ctx.stroke();
-  const lx = W - pad, ly = Hh - pad - ((data[data.length - 1] - min) / range) * (Hh - 2 * pad);
-  ctx.fillStyle = "#C99B2E";
-  ctx.beginPath(); ctx.arc(lx, ly, 5, 0, 2 * Math.PI); ctx.fill();
+}
+
+// le grand graphique de l'indice — dégradé lumineux et point doré (maquettes H1/H2)
+function drawIndexChart() {
+  const cv = document.getElementById("index-chart");
+  if (!cv) return;
+  const ctx = cv.getContext("2d");
+  let data = S.indexHist.slice(-48).concat(indexValue());
+  if (data.length < 2) data = [data[0] || 35_420, data[0] || 35_420];
+  const min = Math.min(...data), max = Math.max(...data);
+  const range = (max - min) || max * 0.01 || 1;
+  const W = cv.width, Hh = cv.height, pad = 14;
+  const X = (i) => pad + (i / (data.length - 1)) * (W - 2 * pad);
+  const Y = (v) => Hh - pad - ((v - min) / range) * (Hh - 2.6 * pad);
+  ctx.clearRect(0, 0, W, Hh);
+
+  // grille discrète
+  ctx.strokeStyle = night ? "rgba(255,255,255,0.07)" : "rgba(34,38,46,0.08)";
+  ctx.lineWidth = 1;
+  for (let g = 1; g <= 3; g++) {
+    const gy = (Hh / 4) * g;
+    ctx.beginPath(); ctx.moveTo(pad, gy); ctx.lineTo(W - pad, gy); ctx.stroke();
+  }
+
+  // aire en dégradé menthe
+  const up = data[data.length - 1] >= data[0];
+  const base = up ? (night ? "92,224,161" : "14,155,98") : "226,96,76";
+  const grad = ctx.createLinearGradient(0, 0, 0, Hh);
+  grad.addColorStop(0, `rgba(${base},0.35)`);
+  grad.addColorStop(1, `rgba(${base},0)`);
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.moveTo(X(0), Hh - pad);
+  data.forEach((v, i) => ctx.lineTo(X(i), Y(v)));
+  ctx.lineTo(X(data.length - 1), Hh - pad);
+  ctx.closePath();
+  ctx.fill();
+
+  // ligne lumineuse menthe → or
+  const lineGrad = ctx.createLinearGradient(0, 0, W, 0);
+  lineGrad.addColorStop(0, up ? "#5CE0A1" : "#E2604C");
+  lineGrad.addColorStop(1, "#E9C05C");
+  ctx.strokeStyle = lineGrad;
+  ctx.lineWidth = 5;
+  ctx.lineJoin = "round";
+  ctx.shadowColor = up ? `rgba(${base},0.7)` : "rgba(226,96,76,0.7)";
+  ctx.shadowBlur = 14;
+  ctx.beginPath();
+  data.forEach((v, i) => (i ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v))));
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  // point final doré avec halo
+  const lx = X(data.length - 1), ly = Y(data[data.length - 1]);
+  ctx.fillStyle = "rgba(233,192,92,0.3)";
+  ctx.beginPath(); ctx.arc(lx, ly, 14, 0, 7); ctx.fill();
+  ctx.fillStyle = "#E9C05C";
+  ctx.beginPath(); ctx.arc(lx, ly, 6, 0, 7); ctx.fill();
 }
 
 function openPanel(tab) {
