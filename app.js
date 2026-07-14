@@ -40,6 +40,25 @@ const CAT_META = {
 const HOUR = 3_600_000, DAY = 24 * HOUR;
 const NPC_NAME = "Jean-Mi Bétonneur";
 
+// Titres de progression (satire oblige)
+const TITLES = [
+  ["Petit Porteur", 0],
+  ["Multipropriétaire", 75_000],
+  ["Marchand de Sommeil", 150_000],
+  ["Baron", 300_000],
+  ["Magnat", 600_000],
+  ["Oligarque", 1_200_000],
+  ["Trop Gros Pour Faire Faillite", 2_500_000],
+];
+
+// Défis du jour (3 par jour, récompenses réelles — plus de rente magique)
+const QUEST_DEFS = {
+  collect: { label: "Encaisser 5 loyers", target: 5, reward: 150 },
+  tournee: { label: "Faire la tournée d'un bien (sur place)", target: 1, reward: 150 },
+  bourse:  { label: "Passer un ordre en Bourse", target: 1, reward: 150 },
+  invest:  { label: "Acheter ou améliorer un bien", target: 1, reward: 200 },
+};
+
 // ---------------------------------------------------------------------------
 // La cote (bourse) — personnalités issues de la simulation
 // ---------------------------------------------------------------------------
@@ -95,6 +114,10 @@ function freshState() {
     eventNow: null,
     dayWorthDay: -1,
     dayWorth: ECO.start,
+    quests: { day: -1, items: [] },
+    titleIdx: 0,
+    streak: 0,
+    streakDay: -1,
   };
 }
 
@@ -214,6 +237,53 @@ function journal(text) {
 }
 
 // ---------------------------------------------------------------------------
+// Défis du jour, titres, série
+// ---------------------------------------------------------------------------
+function ensureQuests() {
+  const d = gameDay();
+  if (S.quests.day === d) return;
+  S.quests = {
+    day: d,
+    items: ["collect", "tournee", d % 2 ? "bourse" : "invest"].map((id) => ({
+      id, progress: 0, done: false,
+    })),
+  };
+}
+
+function questBump(id) {
+  ensureQuests();
+  const q = S.quests.items.find((x) => x.id === id && !x.done);
+  if (!q) return;
+  q.progress += 1;
+  const def = QUEST_DEFS[q.id];
+  if (q.progress >= def.target) {
+    q.done = true;
+    S.cash += def.reward;
+    toast(`🎯 Défi accompli : ${def.label} — +${fmt(def.reward)}`, "gain");
+  }
+  updateHUD(); save();
+}
+
+function bumpStreak() {
+  const d = gameDay();
+  if (S.streakDay === d) return;
+  S.streak = S.streakDay === d - 1 ? S.streak + 1 : 1;
+  S.streakDay = d;
+}
+
+function checkTitle() {
+  const w = netWorth();
+  let idx = 0;
+  TITLES.forEach(([_, min], i) => { if (w >= min) idx = i; });
+  if (idx > S.titleIdx) {
+    S.titleIdx = idx;
+    const name = TITLES[idx][0];
+    headline(`<b>PROMOTION SOCIALE.</b> Vous êtes désormais « ${name} ». Vos anciens amis ne vous reconnaissent plus. Tant mieux, dites-vous.`);
+    journal(`Vous accédez au rang de <b>${name}</b>.`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Actions immobilières
 // ---------------------------------------------------------------------------
 const priceToPay = (p) => (S.npc.includes(p.id) ? p.price * ECO.flip : p.price);
@@ -226,6 +296,7 @@ function buy(p) {
   S.cash -= cost;
   S.npc = S.npc.filter((id) => id !== p.id);
   S.owned[p.id] = { level: 0, lastCollect: S.gameMs, inspectedUntil: S.gameMs + ECO.inspectDurH * HOUR };
+  questBump("invest");
   journal(fromNpc
     ? `Vous avez arraché <b>${p.name}</b> à ${NPC_NAME} pour ${fmt(cost)}. Il boude.`
     : `Acte notarié : <b>${p.name}</b> est à vous pour ${fmt(cost)}. Personne ne vous a rien demandé.`);
@@ -240,6 +311,8 @@ function collect(p) {
   S.cash += amount;
   S.owned[p.id].lastCollect = S.gameMs;
   flyCoin(p, `+${fmt(amount)}`);
+  bumpStreak();
+  questBump("collect");
   refreshMarker(p); updateHUD(); save();
   if (sheetPlace === p) openSheet(p, true);
 }
@@ -259,7 +332,8 @@ function collectAll() {
 
 function inspect(p) {
   S.owned[p.id].inspectedUntil = S.gameMs + ECO.inspectDurH * HOUR;
-  toast(`🔎 Inspection surprise — loyer ×${isWeekend() ? 3 : 2} pendant 24 h`);
+  toast(`👔 Le proprio est passé — loyer ×${isWeekend() ? 3 : 2} pendant 24 h`);
+  questBump("tournee");
   refreshMarker(p); openSheet(p, true); save();
 }
 
@@ -272,6 +346,7 @@ function upgrade(p) {
   o.level += 1;
   journal(`<b>${p.name}</b> passe en « ${ECO.upNames[o.level - 1]} ». Le quartier murmure.`);
   toast(`🏗️ ${ECO.upNames[o.level - 1]} : loyer ×${ECO.upMult[o.level - 1]}`);
+  questBump("invest");
   refreshMarker(p); updateHUD(); openSheet(p, true); save();
 }
 
@@ -379,6 +454,7 @@ function trade(sym, qty) {
     st.shares -= n;
     toast(`📉 Vendu ${n} ${TICKERS[sym].name} — +${fmt(n * st.price)}`, "gain");
   }
+  questBump("bourse");
   updateHUD(); save(); renderPanel();
 }
 
@@ -420,13 +496,7 @@ function tick() {
     S.dayWorthDay = d;
     S.dayWorth = netWorth();
   }
-  if (d > S.lastQuestDay) {
-    if (S.lastQuestDay >= 0) {
-      S.cash += ECO.questDay * (d - S.lastQuestDay);
-      toast(`✅ Défi quotidien : +${fmt(ECO.questDay)} (jetons de présence)`, "gain");
-    }
-    S.lastQuestDay = d;
-  }
+  ensureQuests();
   if (d > S.lastChargesDay) {
     let charges = 0;
     for (const id in S.owned) charges += placeValue(byId[id]) * ECO.chargesDay;
@@ -464,6 +534,12 @@ function updateHUD() {
   chip.hidden = Math.abs(delta) < 0.05;
   chip.textContent = `${delta >= 0 ? "↗ +" : "↘ "}${delta.toFixed(1).replace(".", ",")} %`;
   chip.classList.toggle("down", delta < 0);
+
+  checkTitle();
+  ensureQuests();
+  const done = S.quests.items.filter((q) => q.done).length;
+  $("#quest-count").textContent = `${done}/${S.quests.items.length}`;
+  $("#quest-chip").classList.toggle("done", done === S.quests.items.length);
 
   const t = monopolyTarget();
   const mono = $("#mono-chip");
@@ -539,7 +615,7 @@ function openSheet(p, silent = false) {
         <div class="stat">Loyer <b>${fmt(rentPerDay(p))}</b>/j</div>
         <div class="stat">Niveau <b>${o.level ? ECO.upNames[o.level - 1] : "—"}</b></div>
         ${hasMonopoly(p.cat) ? '<div class="stat">👑 <b>Monopole ×2</b></div>' : ""}
-        ${inspected ? '<div class="stat">🔎 <b>Inspecté</b></div>' : ""}
+        ${inspected ? '<div class="stat">👔 <b>Tournée faite</b></div>' : ""}
       </div>
       <div class="btn-row">
         <button class="btn" id="a-collect" ${accrued(p) < 1 ? "disabled" : ""}>
@@ -547,7 +623,7 @@ function openSheet(p, silent = false) {
       </div>
       <div class="btn-row">
         ${near ? `<button class="btn ghost" id="a-inspect" ${inspected ? "disabled" : ""}>
-          🔎 Inspecter (×${isWeekend() ? 3 : 2}, 24 h)</button>`
+          👔 Tournée du proprio (loyer ×${isWeekend() ? 3 : 2}, 24 h)</button>`
         : `<button class="btn ghost" id="a-goto">🚶 S'y rendre</button>`}
         ${nextCost != null ? `
         <button class="btn gold" id="a-upgrade" ${S.cash >= nextCost ? "" : "disabled"}>
@@ -557,6 +633,8 @@ function openSheet(p, silent = false) {
     $("#a-inspect")?.addEventListener("click", () => inspect(p));
     $("#a-upgrade")?.addEventListener("click", () => upgrade(p));
     $("#a-goto")?.addEventListener("click", () => goTo(p));
+    if (!near) body.insertAdjacentHTML("beforeend",
+      '<div class="hint">👔 La tournée : passez voir votre bien sur place et son loyer double pendant 24 h. C\'est votre raison de sortir marcher.</div>');
   } else {
     const cost = priceToPay(p);
     const npcOwned = S.npc.includes(p.id);
@@ -582,6 +660,11 @@ function openSheet(p, silent = false) {
 $("#sheet-close").addEventListener("click", () => {
   $("#sheet").hidden = true;
   sheetPlace = null;
+});
+
+$("#quest-chip").addEventListener("click", () => {
+  setTab("empire");
+  openPanel("empire");
 });
 
 // ---------------------------------------------------------------------------
@@ -665,8 +748,24 @@ function renderPanel() {
     const rentTotal = ids.reduce((a, id) => a + rentPerDay(byId[id]), 0);
     const propTotal = ids.reduce((a, id) => a + placeValue(byId[id]), 0);
     const pending = ids.reduce((a, id) => a + accrued(byId[id]), 0);
+    ensureQuests();
     c.innerHTML = `<h2>Votre Empire</h2>
-      <div class="panel-sub">Jour ${gameDay() + 1} · ${ids.length} propriété${ids.length > 1 ? "s" : ""} · ${S.monopolies.length} monopole${S.monopolies.length > 1 ? "s" : ""}</div>
+      <div class="panel-sub">
+        <span class="title-chip">${TITLES[S.titleIdx][0]}</span>
+        &nbsp;Jour ${gameDay() + 1} · ${ids.length} propriété${ids.length > 1 ? "s" : ""} · ${S.monopolies.length} monopole${S.monopolies.length > 1 ? "s" : ""}${S.streak > 1 ? ` · 🔥 ${S.streak} j` : ""}
+      </div>
+      <div class="quest-list">
+        ${S.quests.items.map((q) => {
+          const def = QUEST_DEFS[q.id];
+          return `<div class="quest-item ${q.done ? "done" : ""}">
+            <span class="check">${q.done ? "✅" : "⬜️"}</span>
+            <span class="q-label">${def.label}
+              ${def.target > 1 ? `<span class="q-progress">${Math.min(q.progress, def.target)}/${def.target}</span>` : ""}
+            </span>
+            <span class="q-reward">+${fmt(def.reward)}</span>
+          </div>`;
+        }).join("")}
+      </div>
       <div class="sheet-row" style="margin-bottom:10px">
         <div class="stat">Liquidités <b>${fmt(S.cash)}</b></div>
         <div class="stat">Immobilier <b>${fmt(propTotal)}</b></div>
