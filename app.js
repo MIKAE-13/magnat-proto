@@ -51,6 +51,30 @@ const NPCS = {
                  arrival: "a fait livrer douze malles à l'hôtel particulier" },
 };
 const NPC_MAX_PROPS = 4;
+
+// Les Rencontres de rue : le « Pokémon » de MAGNAT (mini-jeu de Négociation)
+const ENCOUNTER_TYPES = {
+  valise: {
+    emoji: "💼", name: "La Valise oubliée", weight: 0.35,
+    desc: "Un attaché-case abandonné sur un banc. Personne ne regarde.",
+    zone: 0.28, speed: 3.2,
+  },
+  client: {
+    emoji: "🧐", name: "Le Client Mystère", weight: 0.30,
+    desc: "Il inspecte la vitrine, carnet en main. Son avis vaut de l'or.",
+    zone: 0.22, speed: 3.6,
+  },
+  informateur: {
+    emoji: "🕵️", name: "L'Informateur", weight: 0.20,
+    desc: "Imperméable, journal troué. « J'ai un tuyau. Ça vous intéresse ? »",
+    zone: 0.16, speed: 4.2,
+  },
+  inspecteur: {
+    emoji: "👮", name: "L'Inspecteur des Impôts", weight: 0.15,
+    desc: "Il vous a repéré. Négociez bien — ou payez.",
+    zone: 0.20, speed: 4.0,
+  },
+};
 const npcOf = (id) => S.npcOwners[id] || null;
 const npcName = (id) => (NPCS[npcOf(id)] ? NPCS[npcOf(id)].name : "un rival");
 
@@ -129,9 +153,11 @@ function freshState() {
     npcLast: {},       // clé du rival -> dernier jour d'achat
     npcAnnounced: {},  // rivaux déjà annoncés dans le journal
     tips: {},          // conseils déjà montrés
-    spawns: [],        // apparitions sur la carte (pièces, coffres)
+    spawns: [],        // rencontres de rue actives
     spawnSeq: 0,
-    rentRushUntil: 0,  // « ruée sur les loyers » (coffre mystère)
+    rentRushUntil: 0,
+    scouted: {},       // repérage : placeId -> jour
+    discounts: {},     // remises d'achat : placeId -> 0..0.15
     lastNpcDay: 0,
     lastChargesDay: 0,
     lastQuestDay: -1,
@@ -175,6 +201,8 @@ function load() {
         offlineGapMs = Math.max(0, Math.min(nowMs - parsed.lastSeen, 14 * DAY));
         st.gameMs += offlineGapMs;
       }
+      // les rencontres sont éphémères : on repart propre à chaque session
+      st.spawns = [];
       // migration : caler l'horloge du jeu sur l'heure réelle
       if (!parsed.clockAnchored) {
         const d = new Date();
@@ -247,7 +275,8 @@ function rentMult(p) {
     m *= isWeekend() ? ECO.inspectWeekendMult : ECO.inspectMult;
   }
   if (hasMonopoly(p.cat)) m *= ECO.monoMult;
-  if (S.gameMs < S.rentRushUntil) m *= 2; // coffre « Ruée sur les loyers »
+  if (S.gameMs < S.rentRushUntil) m *= 2;
+  if (S.gameMs < (o.boostUntil || 0)) m *= 3; // avis 5 étoiles du Client Mystère
   return m;
 }
 
@@ -342,7 +371,8 @@ function checkTitle() {
 // ---------------------------------------------------------------------------
 // Actions immobilières
 // ---------------------------------------------------------------------------
-const priceToPay = (p) => (npcOf(p.id) ? p.price * ECO.flip : p.price);
+const priceToPay = (p) =>
+  (npcOf(p.id) ? p.price * ECO.flip : p.price) * (1 - (S.discounts[p.id] || 0));
 const inRange = (p) => player && dist(player.lat, player.lon, p.lat, p.lon) <= ECO.radiusM;
 
 function buy(p) {
@@ -351,6 +381,7 @@ function buy(p) {
   const fromNpc = npcOf(p.id);
   S.cash -= cost;
   delete S.npcOwners[p.id];
+  delete S.discounts[p.id];
   S.owned[p.id] = { level: 0, lastCollect: S.gameMs, inspectedUntil: S.gameMs + ECO.inspectDurH * HOUR };
   questBump("invest");
   if (fromNpc) {
@@ -419,6 +450,17 @@ function upgrade(p) {
   toast(`🏗️ ${ECO.upNames[o.level - 1]} : loyer ×${ECO.upMult[o.level - 1]}`);
   questBump("invest");
   refreshMarker(p); updateHUD(); openSheet(p, true); save();
+}
+
+function scout(p) {
+  if (S.scouted[p.id] === gameDay() || S.owned[p.id]) return;
+  S.scouted[p.id] = gameDay();
+  const gain = Math.round((30 + Math.random() * 70) / 10) * 10;
+  S.cash += gain;
+  S.discounts[p.id] = Math.min(0.15, (S.discounts[p.id] || 0) + 0.05);
+  sfx("coin");
+  toast(`🔍 Repérage : +${fmt(gain)} · dossier −${Math.round(S.discounts[p.id] * 100)} % sur ${p.name}`, "gain");
+  updateHUD(); openSheet(p, true); save();
 }
 
 function goTo(p) {
@@ -619,23 +661,42 @@ function npcTick() {
 const SPAWN_TARGET = 3;
 const SPAWN_RADIUS_M = 60;
 
+function pickEncounterType() {
+  let r = Math.random(), acc = 0;
+  for (const k in ENCOUNTER_TYPES) {
+    acc += ENCOUNTER_TYPES[k].weight;
+    if (r <= acc) return k;
+  }
+  return "valise";
+}
+
+// les rencontres apparaissent AUTOUR DU JOUEUR, plus denses près des lieux
 function ensureSpawns() {
+  if (!player) return;
   const before = S.spawns.length;
   S.spawns = S.spawns.filter((s) => s.expires > S.gameMs);
   let changed = S.spawns.length !== before;
   while (S.spawns.length < SPAWN_TARGET) {
-    const anchor = PLACES[Math.floor(Math.random() * PLACES.length)];
-    const r = 40 + Math.random() * 140;
-    const ang = Math.random() * 6.283;
-    const lat = anchor.lat + (r / 111320) * Math.sin(ang);
-    const lon = anchor.lon + (r / (111320 * Math.cos((anchor.lat * Math.PI) / 180))) * Math.cos(ang);
-    const chest = Math.random() < 0.15;
+    const type = pickEncounterType();
+    const nearPois = PLACES.filter((p) => dist(player.lat, player.lon, p.lat, p.lon) < 350);
+    let baseLat, baseLon, placeId = null, r, ang = Math.random() * 6.283;
+    // le Client Mystère vit devant un commerce ; les autres : 60 % près d'un
+    // lieu, 40 % au hasard autour du joueur
+    if ((type === "client" || Math.random() < 0.6) && nearPois.length) {
+      const anchor = nearPois[Math.floor(Math.random() * nearPois.length)];
+      baseLat = anchor.lat; baseLon = anchor.lon;
+      placeId = anchor.id;
+      r = 15 + Math.random() * 50;
+    } else {
+      baseLat = player.lat; baseLon = player.lon;
+      r = 70 + Math.random() * 190;
+    }
     S.spawns.push({
       id: "s" + (++S.spawnSeq),
-      type: chest ? "chest" : "coins",
-      lat, lon,
-      value: chest ? 0 : Math.round((100 + Math.random() * 300) / 10) * 10,
-      expires: S.gameMs + (2 + Math.random() * 3) * HOUR,
+      type, placeId,
+      lat: baseLat + (r / 111320) * Math.sin(ang),
+      lon: baseLon + (r / (111320 * Math.cos((baseLat * Math.PI) / 180))) * Math.cos(ang),
+      expires: S.gameMs + (40 + Math.random() * 40) * 60_000,
     });
     changed = true;
   }
@@ -648,7 +709,7 @@ function spawnsGeoJSON() {
     features: S.spawns.map((s) => ({
       type: "Feature",
       geometry: { type: "Point", coordinates: [s.lon, s.lat] },
-      properties: { id: s.id, icon: s.type === "chest" ? "chest" : "coin" },
+      properties: { id: s.id, icon: "sp-" + s.type },
     })),
   };
 }
@@ -657,7 +718,16 @@ function updateSpawnSource() {
   try { map.getSource("spawns")?.setData(spawnsGeoJSON()); } catch (e) {}
 }
 
-function collectSpawn(id) {
+// choc boursier ponctuel (tuyaux de l'Informateur)
+function applyShock(sym, pct) {
+  const st = S.stocks[sym];
+  st.price *= 1 + pct;
+  const r = st.price / st.dayOpen;
+  if (r > 1.15) st.price = st.dayOpen * 1.15;
+  if (r < 0.85) st.price = st.dayOpen * 0.85;
+}
+
+function openEncounter(id) {
   const s = S.spawns.find((x) => x.id === id);
   if (!s || !player) return;
   let d = dist(player.lat, player.lon, s.lat, s.lon);
@@ -666,29 +736,105 @@ function collectSpawn(id) {
     toast(`Trop loin — approchez-vous à ${SPAWN_RADIUS_M} m (${Math.round(d)} m)`);
     return;
   }
-  S.spawns = S.spawns.filter((x) => x.id !== id);
+  startMinigame(s);
+}
+
+function resolveEncounter(s, success) {
+  S.spawns = S.spawns.filter((x) => x.id !== s.id);
   updateSpawnSource();
-  burst(s, 8);
-  if (s.type === "coins") {
-    S.cash += s.value;
-    sfx("coin");
-    toast(`💰 Pièces trouvées : +${fmt(s.value)}`, "gain");
-  } else {
-    sfx("mono");
-    if (Math.random() < 0.55) {
-      const gain = Math.round((500 + Math.random() * 1200) / 10) * 10;
-      S.cash += gain;
-      headline(`<b>HÉRITAGE SURPRISE.</b> Un vieux cousin oublié vous lègue ${fmt(gain)}. Vous ne vous souvenez pas de lui — l'argent, si.`);
-      journal(`Coffre mystère : héritage surprise de ${fmt(gain)}.`);
+  burst(s, success ? 10 : 4);
+  const syms = Object.keys(TICKERS);
+  const sym = syms[Math.floor(Math.random() * syms.length)];
+  const t = TICKERS[sym];
+
+  if (s.type === "valise") {
+    const magot = Math.round((150 + Math.random() * 450) / 10) * 10;
+    const gain = success ? magot : Math.round(magot / 2 / 10) * 10;
+    S.cash += gain;
+    sfx(success ? "buy" : "coin");
+    toast(success ? `💼 La valise est à vous : +${fmt(gain)}` : `💨 La moitié s'envole au vent : +${fmt(gain)}`, "gain");
+  } else if (s.type === "client") {
+    const p = s.placeId && byId[s.placeId];
+    if (!success) {
+      toast("🧐 Le Client Mystère publie un avis assassin. Passons.");
+    } else if (p && S.owned[p.id]) {
+      S.owned[p.id].boostUntil = S.gameMs + 6 * HOUR;
+      sfx("quest");
+      toast(`🌟 Avis 5 étoiles — loyer de ${p.name} ×3 pendant 6 h !`, "gain");
+      journal(`Le Client Mystère encense <b>${p.name}</b>. La file d'attente déborde.`);
+    } else if (p) {
+      S.discounts[p.id] = Math.min(0.15, (S.discounts[p.id] || 0) + 0.10);
+      sfx("quest");
+      toast(`🧐 Il vous glisse le dossier : −${Math.round(S.discounts[p.id] * 100)} % sur ${p.name}`, "gain");
+      if (sheetPlace === p) openSheet(p, true);
     } else {
-      S.rentRushUntil = S.gameMs + 2 * HOUR;
-      headline(`<b>RUÉE SUR LES LOYERS.</b> Tous vos loyers doublent pendant 2 heures. Vos locataires l'ignorent encore.`);
-      journal(`Coffre mystère : loyers ×2 pendant 2 h.`);
+      S.cash += 300; sfx("coin");
+      toast("🧐 Il vous dédommage pour le dérangement : +300 ₣", "gain");
+    }
+  } else if (s.type === "informateur") {
+    if (success) {
+      const pct = 0.01 + Math.random() * 0.02;
+      applyShock(sym, pct);
+      sfx("mono");
+      headline(`<b>TUYAU EN OR.</b> ${t.name} bondit de +${(pct * 100).toFixed(1).replace(".", ",")} % sur une rumeur bien informée.`);
+      journal(`L'Informateur avait raison : <b>${t.name}</b> +${(pct * 100).toFixed(1).replace(".", ",")} %.`);
+    } else {
+      applyShock(sym, -0.01);
+      toast(`🕵️ La rumeur se retourne — ${t.name} −1,0 %`);
+      journal(`Le tuyau de l'Informateur était percé : <b>${t.name}</b> −1 %.`);
+    }
+  } else if (s.type === "inspecteur") {
+    if (success) {
+      S.cash += 150; sfx("quest");
+      toast("👮 Contrôle esquivé avec panache : +150 ₣ de frais récupérés", "gain");
+    } else {
+      const amende = Math.max(50, Math.min(Math.round(S.cash * 0.02), 800));
+      S.cash -= amende;
+      toast(`👮 Redressement express : −${fmt(amende)}`);
+      journal(`L'Inspecteur des Impôts vous a coincé : amende de ${fmt(amende)}.`);
     }
   }
-  tip("spawn", "Des pièces et des coffres apparaissent dans le village au fil de la journée. Ramassez-les en passant — les coffres cachent des bonus rares.");
+  tip("spawn", "Des rencontres apparaissent autour de vous en marchant — plus nombreuses près des commerces. La jauge : tapez dans la zone dorée.");
   updateHUD(); save();
 }
+
+// ---------------------------------------------------------------------------
+// Mini-jeu de Négociation (la « pokeball » de MAGNAT)
+// ---------------------------------------------------------------------------
+let mgSpawn = null, mgRaf = null, mgPos = 0, mgZone = { c: 0.5, w: 0.2 };
+
+function startMinigame(s) {
+  mgSpawn = s;
+  const T = ENCOUNTER_TYPES[s.type];
+  $("#mg-emoji").textContent = T.emoji;
+  $("#mg-title").textContent = T.name;
+  $("#mg-desc").textContent = T.desc;
+  mgZone = { c: 0.3 + Math.random() * 0.4, w: T.zone };
+  const zoneEl = $("#mg-zone");
+  zoneEl.style.left = (mgZone.c - mgZone.w / 2) * 100 + "%";
+  zoneEl.style.width = mgZone.w * 100 + "%";
+  $("#mg").hidden = false;
+  const t0 = performance.now();
+  const loop = (tn) => {
+    mgPos = (Math.sin(((tn - t0) / 1000) * T.speed) + 1) / 2;
+    $("#mg-cursor").style.left = mgPos * 100 + "%";
+    mgRaf = requestAnimationFrame(loop);
+  };
+  mgRaf = requestAnimationFrame(loop);
+}
+
+function endMinigame(attempt) {
+  cancelAnimationFrame(mgRaf);
+  $("#mg").hidden = true;
+  const s = mgSpawn;
+  mgSpawn = null;
+  if (!s) return;
+  if (attempt) {
+    const success = Math.abs(mgPos - mgZone.c) <= mgZone.w / 2;
+    resolveEncounter(s, success);
+  }
+}
+
 
 // ---------------------------------------------------------------------------
 // Tick principal
@@ -1016,16 +1162,20 @@ function openSheet(p, silent = false) {
       <div class="sheet-row">
         <div class="stat">Prix <b>${fmt(cost)}</b>${npcOwned ? " (rachat ×1,5)" : ""}</div>
         <div class="stat">Rapportera <b>${fmt(p.price * ECO.rentDay)}</b>/jour</div>
+        ${S.discounts[p.id] ? `<div class="stat">🔍 Dossier <b>−${Math.round(S.discounts[p.id] * 100)} %</b></div>` : ""}
         ${npcOwned ? `<div class="stat">🏗️ <b>${npcName(p.id)}</b></div>` : ""}
       </div>
       <div class="btn-row">
-        ${!near ? '<button class="btn ghost" id="a-goto">🚶 S\'y rendre</button>' : ""}
+        ${!near ? '<button class="btn ghost" id="a-goto">🚶 S\'y rendre</button>'
+          : `<button class="btn ghost" id="a-scout" ${S.scouted[p.id] === gameDay() ? "disabled" : ""}>
+             ${S.scouted[p.id] === gameDay() ? "🔍 Repéré aujourd'hui" : "🔍 Repérage (−5 % au prix)"}</button>`}
         <button class="btn" id="a-buy" ${near && afford ? "" : "disabled"}>
           ${npcOwned ? "😤 Racheter" : "📜 Acheter"} — ${fmt(cost)}</button>
       </div>
       ${near && !afford ? `<div class="hint">Il vous manque ${fmt(cost - S.cash)}. Les loyers tombent, patience.</div>` : ""}`;
     $("#a-buy")?.addEventListener("click", () => buy(p));
     $("#a-goto")?.addEventListener("click", () => goTo(p));
+    $("#a-scout")?.addEventListener("click", () => scout(p));
   }
   if (!silent) map.flyTo({ center: [p.lon, p.lat], zoom: Math.max(map.getZoom(), 16), speed: 1.4 });
   $("#coach").hidden = true;
@@ -1042,6 +1192,8 @@ $("#quest-chip").addEventListener("click", () => {
   openPanel("empire");
 });
 $("#help-chip").addEventListener("click", () => openPanel("aide"));
+$("#mg-btn").addEventListener("click", () => endMinigame(true));
+$("#mg-flee").addEventListener("click", () => endMinigame(false));
 
 // respiration de la carte : pièces qui flottent, anneaux qui pulsent
 setInterval(() => {
@@ -1586,25 +1738,21 @@ let placesWired = false;
 
 const spritePrefix = () => (night && nightSprites ? "n-" : "d-");
 
-function chestImage() {
+// pastille de rencontre : bulle blanche + personnage emoji
+function encounterIcon(emoji) {
   const c = document.createElement("canvas");
-  c.width = c.height = 64;
+  c.width = c.height = 80;
   const x = c.getContext("2d");
-  x.fillStyle = "#A9702F";
-  x.beginPath(); x.roundRect(8, 20, 48, 34, 7); x.fill();
-  x.fillStyle = "#8A5620";
-  x.beginPath(); x.roundRect(8, 20, 48, 13, 7); x.fill();
-  x.fillStyle = "#E9C05C";
-  x.fillRect(28, 20, 8, 34);
-  x.beginPath(); x.arc(32, 40, 6, 0, 7); x.fill();
-  x.strokeStyle = "#6E4218"; x.lineWidth = 3;
-  x.beginPath(); x.roundRect(8, 20, 48, 34, 7); x.stroke();
-  x.fillStyle = "#FFF2C4";
+  x.beginPath(); x.arc(40, 36, 30, 0, 7);
+  x.fillStyle = "#FFFDF4"; x.fill();
+  x.lineWidth = 4; x.strokeStyle = "#E9C05C"; x.stroke();
   x.beginPath();
-  x.moveTo(50, 4); x.lineTo(53, 10); x.lineTo(59, 13); x.lineTo(53, 16);
-  x.lineTo(50, 22); x.lineTo(47, 16); x.lineTo(41, 13); x.lineTo(47, 10);
-  x.closePath(); x.fill();
-  return x.getImageData(0, 0, 64, 64);
+  x.moveTo(32, 62); x.lineTo(40, 76); x.lineTo(48, 62);
+  x.closePath(); x.fillStyle = "#E9C05C"; x.fill();
+  x.font = "34px -apple-system, 'Apple Color Emoji', sans-serif";
+  x.textAlign = "center"; x.textBaseline = "middle";
+  x.fillText(emoji, 40, 38);
+  return x.getImageData(0, 0, 80, 80);
 }
 
 function coinImage() {
@@ -1648,7 +1796,9 @@ async function loadSprites() {
       .catch(() => {}),
   ]));
   if (!map.hasImage("coin")) map.addImage("coin", coinImage());
-  if (!map.hasImage("chest")) map.addImage("chest", chestImage());
+  for (const k in ENCOUNTER_TYPES) {
+    if (!map.hasImage("sp-" + k)) map.addImage("sp-" + k, encounterIcon(ENCOUNTER_TYPES[k].emoji));
+  }
   spritesReady = true;
 }
 
@@ -1756,7 +1906,7 @@ function buildPlaceLayers() {
     placesWired = true;
     map.on("click", "spawn-icons", (e) => {
       const f = e.features && e.features[0];
-      if (f) collectSpawn(f.properties.id);
+      if (f) openEncounter(f.properties.id);
     });
     map.on("mouseenter", "spawn-icons", () => (map.getCanvas().style.cursor = "pointer"));
     map.on("mouseleave", "spawn-icons", () => (map.getCanvas().style.cursor = ""));

@@ -703,3 +703,63 @@ body.night .stock-card {
   .sc-actions .btn.mini { flex: 1 1 40%; max-width: none; }
   .sc-chart { height: 42px; }
 }
+
+/* ---------- Mini-jeu de Négociation ---------- */
+#mg {
+  position: fixed; inset: 0;
+  background: rgba(20, 23, 29, 0.6);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+  z-index: 90;
+  display: flex; align-items: center; justify-content: center;
+  padding: 22px;
+}
+#mg[hidden] { display: none; }
+#mg-card {
+  background: var(--card);
+  border-radius: 22px;
+  box-shadow: var(--shadow);
+  padding: 26px 22px 18px;
+  max-width: 360px; width: 100%;
+  text-align: center;
+  animation: sheet-up 0.25s ease-out;
+}
+#mg-emoji { font-size: 64px; line-height: 1; animation: coin-bob 1.6s ease-in-out infinite; }
+#mg-title { font-size: 20px; font-weight: 800; margin-top: 10px; }
+#mg-desc { color: var(--ink-soft); font-size: 13.5px; margin: 6px 0 18px; line-height: 1.4; }
+#mg-track {
+  position: relative;
+  height: 26px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+#mg-zone {
+  position: absolute; top: 0; bottom: 0;
+  background: linear-gradient(180deg, var(--gold-bright), var(--gold));
+  border-radius: 999px;
+  opacity: 0.9;
+}
+#mg-cursor {
+  position: absolute; top: -3px; bottom: -3px;
+  width: 6px;
+  margin-left: -3px;
+  background: var(--ink);
+  border-radius: 3px;
+  box-shadow: 0 0 6px rgba(0,0,0,0.4);
+}
+body.night #mg-cursor { background: #fff; }
+.mg-labels {
+  display: flex; justify-content: space-between;
+  font-size: 10px; font-weight: 800; letter-spacing: 0.08em;
+  color: var(--ink-soft);
+  margin: 6px 2px 16px;
+}
+#mg-btn { width: 100%; font-size: 16px; padding: 14px; }
+#mg-flee {
+  margin-top: 10px;
+  border: 0; background: none;
+  color: var(--ink-soft);
+  font-size: 13px; font-weight: 700;
+  cursor: pointer;
+}
