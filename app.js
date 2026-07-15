@@ -174,6 +174,9 @@ function freshState() {
     deals: [],         // les « œufs » : dossiers qui se bouclent en km
     dealDay: -1,
     avatar: "loup",    // personnage du joueur
+    xp: 0,
+    level: 1,
+    items: { cafe: 2, croissant: 2 },  // consommables de négociation
     lastNpcDay: 0,
     lastChargesDay: 0,
     lastQuestDay: -1,
@@ -355,6 +358,30 @@ function journal(text) {
 }
 
 // ---------------------------------------------------------------------------
+// XP & niveaux
+// ---------------------------------------------------------------------------
+const xpNeeded = (lv) => 150 * lv;
+
+function addXp(n) {
+  S.xp += n;
+  let up = false;
+  while (S.xp >= xpNeeded(S.level)) {
+    S.xp -= xpNeeded(S.level);
+    S.level += 1;
+    up = true;
+  }
+  if (up) {
+    const bonus = 250 * S.level;
+    S.cash += bonus;
+    sfx("mono");
+    headline(`<b>NIVEAU ${S.level}.</b> Votre réputation grandit — prime de notoriété : +${fmt(bonus)}.`);
+    journal(`Vous atteignez le <b>niveau ${S.level}</b>. Prime de notoriété : +${fmt(bonus)}.`);
+  }
+  updateHUD(); save();
+  return up;
+}
+
+// ---------------------------------------------------------------------------
 // Défis du jour, titres, série
 // ---------------------------------------------------------------------------
 function ensureQuests() {
@@ -378,7 +405,12 @@ function questBump(id) {
     q.done = true;
     S.cash += def.reward;
     sfx("quest");
-    toast(`🎯 Défi accompli : ${def.label} — +${fmt(def.reward)}`, "gain");
+    addXp(25);
+    // un défi accompli offre parfois un objet de négociation
+    if (Math.random() < 0.5) {
+      const it = Math.random() < 0.5 ? "cafe" : "croissant";
+      S.items[it] = (S.items[it] || 0) + 1;
+    }
   }
   updateHUD(); save();
 }
@@ -418,6 +450,7 @@ function buy(p) {
   delete S.discounts[p.id];
   S.owned[p.id] = { level: 0, lastCollect: S.gameMs, inspectedUntil: S.gameMs + ECO.inspectDurH * HOUR };
   questBump("invest");
+  addXp(40);
   if (fromNpc) {
     const n = NPCS[fromNpc];
     journal(`Vous avez arraché <b>${p.name}</b> à ${n.name} pour ${fmt(cost)}. Il claque la porte du notaire.`);
@@ -469,6 +502,7 @@ function inspect(p) {
   S.owned[p.id].inspectedUntil = S.gameMs + ECO.inspectDurH * HOUR;
   toast(`👔 Le proprio est passé — loyer ×${isWeekend() ? 3 : 2} pendant 24 h`);
   questBump("tournee");
+  addXp(15);
   tip("mono", "Visez le Monopole : possédez TOUS les commerces d'une catégorie du village et leurs loyers doublent pour toujours. La jauge en haut vous guide.");
   refreshMarker(p); openSheet(p, true); save();
 }
@@ -510,6 +544,7 @@ function checkMonopolies(cat) {
   if (S.firstMonopolyDay < 0) S.firstMonopolyDay = gameDay();
   PLACES.filter((p) => p.cat === cat).forEach((p) => burst(p, 14));
   sfx("mono");
+  addXp(150);
   const meta = CAT_META[cat];
   headline(`<b>LE MONOPOLE DES ${meta.plural.toUpperCase()} DE MOURIÈS EST À VOUS.</b>
     Les loyers de la catégorie doublent. Le prix de tout augmente mystérieusement.`);
@@ -805,6 +840,7 @@ function openEncounter(id) {
   startMinigame(s);
 }
 
+// applique l'issue de la rencontre et RENVOIE les lignes de résultat
 function resolveEncounter(s, success) {
   S.spawns = S.spawns.filter((x) => x.id !== s.id);
   updateSpawnSource();
@@ -812,70 +848,77 @@ function resolveEncounter(s, success) {
   const syms = Object.keys(TICKERS);
   const sym = syms[Math.floor(Math.random() * syms.length)];
   const t = TICKERS[sym];
+  const lines = [];
 
   if (s.type === "valise") {
     if (success) {
       const gain = Math.round((100 + Math.random() * 150) / 10) * 10;
       S.cash += gain;
       sfx("buy");
-      toast(`💼 La valise est à vous : +${fmt(gain)}`, "gain");
+      lines.push({ ic: "💰", txt: `Le magot est à vous : +${fmt(gain)}`, cls: "up" });
+      if (Math.random() < 0.35) {
+        const it = Math.random() < 0.5 ? "cafe" : "croissant";
+        S.items[it] = (S.items[it] || 0) + 1;
+        lines.push({ ic: it === "cafe" ? "☕" : "🥐", txt: `Objet trouvé : ${it === "cafe" ? "Café serré" : "Croissant"}`, cls: "up" });
+      }
     } else {
       const perte = Math.min(S.cash, Math.round((50 + Math.random() * 50) / 10) * 10);
       S.cash -= perte;
-      toast(`😬 Le propriétaire revient furieux — dédommagement : −${fmt(perte)}`);
+      lines.push({ ic: "😬", txt: `Le propriétaire revient furieux — dédommagement : −${fmt(perte)}`, cls: "down" });
     }
   } else if (s.type === "client") {
     const p = s.placeId && byId[s.placeId];
     if (!success) {
       if (p && S.owned[p.id]) {
         S.owned[p.id].malusUntil = S.gameMs + 6 * HOUR;
-        toast(`💔 Avis assassin — loyer de ${p.name} ×0,5 pendant 6 h`);
-        journal(`Le Client Mystère étrille <b>${p.name}</b> : « service glacial, addition brûlante ». Loyer divisé par deux 6 h.`);
+        lines.push({ ic: "💔", txt: `Avis assassin : loyer de ${p.name} ×0,5 pendant 6 h`, cls: "down" });
+        journal(`Le Client Mystère étrille <b>${p.name}</b> : « service glacial, addition brûlante ».`);
       } else {
-        toast("🧐 Le Client Mystère tourne les talons. Rien perdu, rien gagné.");
+        lines.push({ ic: "🧐", txt: "Il tourne les talons. Rien perdu, rien gagné.", cls: "" });
       }
     } else if (p && S.owned[p.id]) {
       S.owned[p.id].boostUntil = S.gameMs + 6 * HOUR;
       sfx("quest");
-      toast(`🌟 Avis 5 étoiles — loyer de ${p.name} ×3 pendant 6 h !`, "gain");
-      journal(`Le Client Mystère encense <b>${p.name}</b>. La file d'attente déborde.`);
+      lines.push({ ic: "🌟", txt: `Avis 5 étoiles : loyer de ${p.name} ×3 pendant 6 h`, cls: "up" });
+      journal(`Le Client Mystère encense <b>${p.name}</b>. La file déborde.`);
     } else if (p) {
       S.discounts[p.id] = Math.min(0.15, (S.discounts[p.id] || 0) + 0.10);
       sfx("quest");
-      toast(`🧐 Il vous glisse le dossier : −${Math.round(S.discounts[p.id] * 100)} % sur ${p.name}`, "gain");
-      if (sheetPlace === p) openSheet(p, true);
+      lines.push({ ic: "🔖", txt: `Il vous glisse le dossier : −${Math.round(S.discounts[p.id] * 100)} % sur ${p.name}`, cls: "up" });
     } else {
       S.cash += 300; sfx("coin");
-      toast("🧐 Il vous dédommage pour le dérangement : +300 ₣", "gain");
+      lines.push({ ic: "💵", txt: "Dédommagement pour le dérangement : +300 ₣", cls: "up" });
     }
   } else if (s.type === "informateur") {
     if (success) {
       const pct = 0.02 + Math.random() * 0.02;
       applyShock(sym, pct);
       sfx("mono");
-      headline(`<b>TUYAU EN OR.</b> ${t.name} bondit de +${(pct * 100).toFixed(1).replace(".", ",")} % sur une rumeur bien informée.`);
+      lines.push({ ic: "📈", txt: `Tuyau en or : ${t.name} +${(pct * 100).toFixed(1).replace(".", ",")} %`, cls: "up" });
+      headline(`<b>TUYAU EN OR.</b> ${t.name} bondit de +${(pct * 100).toFixed(1).replace(".", ",")} %.`);
       journal(`L'Informateur avait raison : <b>${t.name}</b> +${(pct * 100).toFixed(1).replace(".", ",")} %.`);
     } else {
       const pct = 0.015 + Math.random() * 0.005;
       const frais = Math.min(S.cash, 200);
       S.cash -= frais;
       applyShock(sym, -pct);
-      toast(`🕵️ Tuyau percé : −${fmt(frais)}, et ${t.name} −${(pct * 100).toFixed(1).replace(".", ",")} %`);
-      journal(`Le tuyau de l'Informateur était percé : <b>${t.name}</b> −${(pct * 100).toFixed(1).replace(".", ",")} % — et il a gardé l'avance.`);
+      lines.push({ ic: "🕳️", txt: `Tuyau percé : −${fmt(frais)}`, cls: "down" });
+      lines.push({ ic: "📉", txt: `${t.name} −${(pct * 100).toFixed(1).replace(".", ",")} %`, cls: "down" });
+      journal(`Le tuyau de l'Informateur était percé : <b>${t.name}</b> −${(pct * 100).toFixed(1).replace(".", ",")} %.`);
     }
   } else if (s.type === "inspecteur") {
     if (success) {
       S.cash += 150; sfx("quest");
-      toast("👮 Contrôle esquivé avec panache : +150 ₣ de frais récupérés", "gain");
+      lines.push({ ic: "😮‍💨", txt: "Contrôle esquivé avec panache : +150 ₣", cls: "up" });
     } else {
       const amende = Math.max(50, Math.min(Math.round(S.cash * 0.02), 800));
       S.cash -= amende;
-      toast(`👮 Redressement express : −${fmt(amende)}`);
+      lines.push({ ic: "🧾", txt: `Redressement express : −${fmt(amende)}`, cls: "down" });
       journal(`L'Inspecteur des Impôts vous a coincé : amende de ${fmt(amende)}.`);
     }
   }
-  tip("spawn", "Des rencontres apparaissent autour de vous en marchant — plus nombreuses près des commerces. La jauge : tapez dans la zone dorée.");
   updateHUD(); save();
+  return lines;
 }
 
 // ---------------------------------------------------------------------------
@@ -904,6 +947,7 @@ function hatchDeal(deal) {
   const syms = Object.keys(TICKERS);
   const sym = syms[Math.floor(Math.random() * syms.length)];
   sfx("mono");
+  addXp([50, 100, 200][deal.tier]);
   if (deal.tier === 0) {
     const gain = Math.round((400 + Math.random() * 500) / 10) * 10;
     S.cash += gain;
@@ -947,46 +991,145 @@ function walkCredit(d) {
 }
 
 // ---------------------------------------------------------------------------
-// Mini-jeu de Négociation (la « pokeball » de MAGNAT)
+// La Négociation : 3 manches, 2 accords pour conclure, objets, écran de résultat
 // ---------------------------------------------------------------------------
-let mgSpawn = null, mgRaf = null, mgPos = 0, mgZone = { c: 0.5, w: 0.2 };
+const MG_XP_WIN = { valise: 30, client: 40, inspecteur: 50, informateur: 80 };
+let mg = null;
 
 function startMinigame(s) {
-  mgSpawn = s;
   const T = ENCOUNTER_TYPES[s.type];
-  const img = $("#mg-img");
-  const fallback = $("#mg-emoji");
-  img.style.display = "";
-  fallback.style.display = "none";
-  img.onerror = () => { img.style.display = "none"; fallback.style.display = ""; };
+  mg = { s, hist: [], pos: 0, zc: 0.5, zw: T.zone, speed: T.speed, itemUsed: false, raf: null, locked: false };
+  const img = $("#mg-img"), fb = $("#mg-emoji");
+  img.style.display = ""; fb.style.display = "none";
+  img.onerror = () => { img.style.display = "none"; fb.style.display = ""; };
   img.src = `assets/char-${s.type}.png`;
-  fallback.textContent = T.emoji;
+  fb.textContent = T.emoji;
   $("#mg-title").textContent = T.name;
   $("#mg-desc").textContent = T.desc;
-  mgZone = { c: 0.3 + Math.random() * 0.4, w: T.zone };
-  const zoneEl = $("#mg-zone");
-  zoneEl.style.left = (mgZone.c - mgZone.w / 2) * 100 + "%";
-  zoneEl.style.width = mgZone.w * 100 + "%";
+  const stars = { valise: 1, client: 2, inspecteur: 2, informateur: 3 }[s.type];
+  $("#mg-stars").innerHTML = "★".repeat(stars) + '<span class="dim">' + "★".repeat(3 - stars) + "</span>";
+  $("#mg-game").hidden = false;
+  $("#mg-result").hidden = true;
   $("#mg").hidden = false;
-  const t0 = performance.now();
-  const loop = (tn) => {
-    mgPos = (Math.sin(((tn - t0) / 1000) * T.speed) + 1) / 2;
-    $("#mg-cursor").style.left = mgPos * 100 + "%";
-    mgRaf = requestAnimationFrame(loop);
-  };
-  mgRaf = requestAnimationFrame(loop);
+  startRound();
 }
 
-function endMinigame(attempt) {
-  cancelAnimationFrame(mgRaf);
-  $("#mg").hidden = true;
-  const s = mgSpawn;
-  mgSpawn = null;
-  if (!s) return;
-  if (attempt) {
-    const success = Math.abs(mgPos - mgZone.c) <= mgZone.w / 2;
-    resolveEncounter(s, success);
+function mgRoundDots() {
+  $("#mg-rounds").innerHTML = Array.from({ length: 3 }, (_, i) => {
+    if (mg.hist[i] === true) return '<span class="rd ok">🤝</span>';
+    if (mg.hist[i] === false) return '<span class="rd ko">✕</span>';
+    return '<span class="rd">·</span>';
+  }).join("");
+}
+
+function mgUpdateItems() {
+  const c = $("#mg-n-cafe"), k = $("#mg-n-croissant");
+  c.textContent = "×" + (S.items.cafe || 0);
+  k.textContent = "×" + (S.items.croissant || 0);
+  $("#mg-item-cafe").disabled = mg.itemUsed || !(S.items.cafe > 0);
+  $("#mg-item-croissant").disabled = mg.itemUsed || !(S.items.croissant > 0);
+}
+
+function startRound() {
+  mg.locked = false;
+  mg.itemUsed = false;
+  const round = mg.hist.length;
+  // la pression monte : chaque manche est un peu plus vive
+  mg.speedRound = mg.speed * (1 + round * 0.18);
+  mg.zwRound = mg.zw * (1 - round * 0.12);
+  mg.zc = 0.28 + Math.random() * 0.44;
+  mgRoundDots();
+  mgUpdateItems();
+  mgApplyZone();
+  cancelAnimationFrame(mg.raf);
+  const t0 = performance.now();
+  const loop = (tn) => {
+    if (!mg) return;
+    mg.pos = (Math.sin(((tn - t0) / 1000) * mg.speedRound) + 1) / 2;
+    $("#mg-cursor").style.left = mg.pos * 100 + "%";
+    mg.raf = requestAnimationFrame(loop);
+  };
+  mg.raf = requestAnimationFrame(loop);
+}
+
+function mgApplyZone() {
+  const z = $("#mg-zone");
+  z.style.left = (mg.zc - mg.zwRound / 2) * 100 + "%";
+  z.style.width = mg.zwRound * 100 + "%";
+}
+
+function mgUseItem(kind) {
+  if (!mg || mg.locked || mg.itemUsed || !(S.items[kind] > 0)) return;
+  S.items[kind] -= 1;
+  mg.itemUsed = true;
+  if (kind === "cafe") mg.speedRound *= 0.6;          // le café ralentit la jauge
+  if (kind === "croissant") { mg.zwRound = Math.min(0.5, mg.zwRound * 1.6); mgApplyZone(); } // le croissant amadoue
+  sfx("coin");
+  mgUpdateItems();
+  save();
+  // relance la boucle à la nouvelle vitesse
+  if (kind === "cafe") {
+    cancelAnimationFrame(mg.raf);
+    const t0 = performance.now() - (Math.asin(mg.pos * 2 - 1) / mg.speedRound) * 1000;
+    const loop = (tn) => {
+      if (!mg) return;
+      mg.pos = (Math.sin(((tn - t0) / 1000) * mg.speedRound) + 1) / 2;
+      $("#mg-cursor").style.left = mg.pos * 100 + "%";
+      mg.raf = requestAnimationFrame(loop);
+    };
+    mg.raf = requestAnimationFrame(loop);
   }
+}
+
+function mgAttempt() {
+  if (!mg || mg.locked) return;
+  mg.locked = true;
+  cancelAnimationFrame(mg.raf);
+  const success = Math.abs(mg.pos - mg.zc) <= mg.zwRound / 2;
+  mg.hist.push(success);
+  mgRoundDots();
+  const card = $("#mg-card");
+  card.classList.add(success ? "mg-hit" : "mg-miss");
+  sfx(success ? "coin" : "quest");
+  setTimeout(() => {
+    card.classList.remove("mg-hit", "mg-miss");
+    const wins = mg.hist.filter(Boolean).length;
+    const fails = mg.hist.length - wins;
+    if (wins >= 2) mgFinish(true);
+    else if (fails >= 2) mgFinish(false);
+    else startRound();
+  }, 650);
+}
+
+function mgFinish(success) {
+  cancelAnimationFrame(mg.raf);
+  const s = mg.s;
+  const lines = resolveEncounter(s, success);
+  const xpGain = success ? MG_XP_WIN[s.type] : 12;
+  const lvlBefore = S.level;
+  addXp(xpGain);
+  const leveled = S.level > lvlBefore;
+
+  $("#mg-game").hidden = true;
+  const v = $("#mg-verdict");
+  v.textContent = success ? "ACCORD CONCLU" : "NÉGOCIATION ROMPUE";
+  v.className = success ? "up" : "down";
+  $("#mg-lines").innerHTML = lines.map((l) =>
+    `<div class="mg-line ${l.cls}"><span>${l.ic}</span>${l.txt}</div>`).join("") +
+    (leveled ? `<div class="mg-line up"><span>🎉</span>NIVEAU ${S.level} ! Prime de notoriété : +${fmt(250 * S.level)}</div>` : "");
+  $("#mg-xp-gain").textContent = `+${xpGain} XP`;
+  $("#mg-xp-level").textContent = `Nv ${S.level}`;
+  const fill = $("#mg-xp-fill");
+  fill.style.width = "0%";
+  setTimeout(() => { fill.style.width = Math.min(100, (S.xp / xpNeeded(S.level)) * 100) + "%"; }, 80);
+  $("#mg-result").hidden = false;
+  mg = null;
+}
+
+function mgClose(fled) {
+  if (mg) cancelAnimationFrame(mg.raf);
+  $("#mg").hidden = true;
+  mg = null; // en fuyant, la rencontre reste sur la carte
 }
 
 
@@ -1060,6 +1203,7 @@ function updateHUD() {
   animateWorth(worth);
   $("#cash").textContent = fmt(S.cash);
   // variation du jour, comme sur la maquette H3 (« ↗ +2,4 % »)
+  $("#lvl").textContent = S.level;
   const delta = S.dayWorth > 0 ? (worth / S.dayWorth - 1) * 100 : 0;
   const chip = $("#delta");
   chip.hidden = Math.abs(delta) < 0.05;
@@ -1355,8 +1499,11 @@ $("#mono-chip").addEventListener("click", () => {
     .sort((a, b) => priceToPay(a) - priceToPay(b))[0];
   if (next) openSheet(next);
 });
-$("#mg-btn").addEventListener("click", () => endMinigame(true));
-$("#mg-flee").addEventListener("click", () => endMinigame(false));
+$("#mg-btn").addEventListener("click", mgAttempt);
+$("#mg-flee").addEventListener("click", () => mgClose(true));
+$("#mg-close").addEventListener("click", () => mgClose(false));
+$("#mg-item-cafe").addEventListener("click", () => mgUseItem("cafe"));
+$("#mg-item-croissant").addEventListener("click", () => mgUseItem("croissant"));
 
 // respiration de la carte : pièces qui flottent, anneaux qui pulsent
 setInterval(() => {
@@ -1504,6 +1651,7 @@ function renderPanel() {
             <img src="assets/avatars/${k}.png" alt="${AVATARS[k].name}">
           </button>`).join("")}
       </div>
+      <div class="walk-line">⭐ <b>Niveau ${S.level}</b> · ${Math.round(S.xp)}/${xpNeeded(S.level)} XP · ☕ ×${S.items.cafe || 0} · 🥐 ×${S.items.croissant || 0}</div>
       <div class="walk-line">🚶 <b>${S.walk.total.toFixed(1)} km</b> parcourus · indemnités du jour : ${Math.min(S.walk.todayKm, 20).toFixed(1)}/20 km</div>
       ${S.deals.map((dl) => {
         const T = DEAL_TIERS[dl.tier];
@@ -1931,8 +2079,17 @@ function setPlayer(lat, lon, fly = false) {
   }
   try { map.getSource("radius")?.setData(radiusGeoJSON()); } catch (e) {}
   if (fly) map.flyTo({ center: [lon, lat], zoom: Math.max(map.getZoom(), 16) });
+  else if (follow) map.easeTo({ center: [lon, lat], duration: 750 });
   if (sheetPlace) openSheet(sheetPlace, true);
 }
+
+// la caméra suit le personnage ; déplacer la carte la libère, 🎯 recentre
+let follow = true;
+$("#btn-recenter").addEventListener("click", () => {
+  follow = true;
+  $("#btn-recenter").hidden = true;
+  if (player) map.easeTo({ center: [player.lon, player.lat], zoom: Math.max(map.getZoom(), 16) });
+});
 
 function setAvatar(key) {
   if (!AVATARS[key]) return;
@@ -2250,6 +2407,10 @@ fetch("https://tiles.openfreemap.org/styles/positron")
     });
     map.on("click", (e) => {
       if (simMode) setPlayer(e.lngLat.lat, e.lngLat.lng);
+    });
+    map.on("dragstart", () => {
+      follow = false;
+      $("#btn-recenter").hidden = false;
     });
   })
   .catch(() => {

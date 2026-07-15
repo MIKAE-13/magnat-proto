@@ -22,6 +22,7 @@
       <span class="pill-icon">🏛️</span>
       <span class="pill-label">Patrimoine</span>
       <span id="worth">—</span>
+      <span class="lvl-chip">⭐ <span id="lvl">1</span></span>
       <span id="delta" class="delta-chip" hidden>↗ +0,0 %</span>
       <span class="pill-sep">·</span>
       <span class="pill-cash">💵 <span id="cash">—</span></span>
@@ -53,6 +54,7 @@
   <div id="dev-panel">
     <button id="btn-sim" title="Se déplacer en touchant la carte">🚶 balade</button>
   </div>
+  <button id="btn-recenter" hidden title="Recentrer sur votre personnage">🎯</button>
 
   <!-- Guide d'action : dit toujours quoi faire maintenant -->
   <button id="coach" hidden></button>
@@ -71,20 +73,40 @@
     <div id="panel-content"></div>
   </div>
 
-  <!-- Mini-jeu de Négociation -->
+  <!-- La Négociation : l'écran de rencontre -->
   <div id="mg" hidden>
     <div id="mg-card">
+      <div id="mg-stars"></div>
       <img id="mg-img" alt="">
       <div id="mg-emoji">🕵️</div>
       <div id="mg-title">—</div>
       <div id="mg-desc">—</div>
-      <div id="mg-track">
-        <div id="mg-zone"></div>
-        <div id="mg-cursor"></div>
+
+      <div id="mg-game">
+        <div id="mg-rounds"></div>
+        <div id="mg-track">
+          <div id="mg-zone"></div>
+          <div id="mg-cursor"></div>
+        </div>
+        <div class="mg-labels"><span>trop timide</span><span>ACCORD</span><span>trop gourmand</span></div>
+        <div id="mg-items">
+          <button id="mg-item-cafe" class="mg-item">☕ Café serré <span id="mg-n-cafe"></span></button>
+          <button id="mg-item-croissant" class="mg-item">🥐 Croissant <span id="mg-n-croissant"></span></button>
+        </div>
+        <button id="mg-btn" class="btn">🤝 Négocier !</button>
+        <button id="mg-flee">Ignorer et partir</button>
       </div>
-      <div class="mg-labels"><span>trop timide</span><span>ACCORD</span><span>trop gourmand</span></div>
-      <button id="mg-btn" class="btn">🤝 Négocier !</button>
-      <button id="mg-flee">Ignorer et partir</button>
+
+      <div id="mg-result" hidden>
+        <div id="mg-verdict">—</div>
+        <div id="mg-lines"></div>
+        <div class="xp-row">
+          <span id="mg-xp-gain">+0 XP</span>
+          <div class="xp-bar"><div id="mg-xp-fill"></div></div>
+          <span id="mg-xp-level">Nv 1</span>
+        </div>
+        <button id="mg-close" class="btn">Continuer</button>
+      </div>
     </div>
   </div>
 
