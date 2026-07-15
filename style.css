@@ -685,3 +685,21 @@ body.night .stock-card {
 /* les cartes ne cascadent qu'à l'OUVERTURE du panneau, pas à chaque maj */
 .stock-card { animation: none; }
 #panel-content.animate .stock-card { animation: card-in 0.35s ease-out both; }
+
+/* ---------- Bourse v3 : tracé vivant + achat direct sur chaque carte ---------- */
+.sc-chart { width: 100%; height: 46px; display: block; margin-top: 9px; }
+.sc-actions { display: flex; align-items: center; gap: 8px; margin-top: 9px; flex-wrap: wrap; }
+.sc-actions .btn.mini {
+  flex: 1 1 110px;
+  max-width: 150px;
+  padding: 10px 8px;
+  font-size: 13px;
+  margin-left: auto;
+}
+.sc-actions .btn.mini + .btn.mini { margin-left: 0; }
+.btn.sell { background: var(--coral); box-shadow: 0 4px 12px rgba(226, 96, 76, 0.3); }
+.btn.sell:disabled { background: var(--line); box-shadow: none; color: var(--ink-soft); }
+@media (max-width: 430px) {
+  .sc-actions .btn.mini { flex: 1 1 40%; max-width: none; }
+  .sc-chart { height: 42px; }
+}

@@ -538,7 +538,8 @@ function trade(sym, qty) {
     toast(`📉 Vendu ${n} ${TICKERS[sym].name} — +${fmt(n * st.price)}`, "gain");
   }
   questBump("bourse");
-  updateHUD(); save(); renderPanel();
+  updateHUD(); save();
+  if (panelTab === "bourse") refreshBourseTexts();
 }
 
 // ---------------------------------------------------------------------------
@@ -817,7 +818,7 @@ function openSheet(p, silent = false) {
         <div class="stat">Rapporte <b>${fmt(rentPerDay(p))}</b>/jour</div>
         ${o.level ? `<div class="stat">🏗️ <b>${ECO.upNames[o.level - 1]}</b></div>` : ""}
         ${hasMonopoly(p.cat) ? '<div class="stat">👑 <b>Monopole ×2</b></div>' : ""}
-        ${inspected ? '<div class="stat">👔 <b>Tournée faite</b></div>' : ""}
+        ${inspected ? `<div class="stat">👔 <b>Tournée ×${isWeekend() ? 3 : 2}</b> — encore ${Math.max(1, Math.ceil((o.inspectedUntil - S.gameMs) / HOUR))} h</div>` : ""}
       </div>
       <div class="btn-row">
         <button class="btn" id="a-collect" ${accrued(p) < 1 ? "disabled" : ""}>
@@ -825,7 +826,7 @@ function openSheet(p, silent = false) {
       </div>
       <div class="btn-row">
         ${near ? `<button class="btn ghost" id="a-inspect" ${inspected ? "disabled" : ""}>
-          👔 Tournée du proprio (loyer ×${isWeekend() ? 3 : 2}, 24 h)</button>`
+          ${inspected ? "👔 Tournée déjà faite — revenez demain" : `👔 Tournée du proprio (loyer ×${isWeekend() ? 3 : 2}, 24 h)`}</button>`
         : `<button class="btn ghost" id="a-goto">🚶 S'y rendre</button>`}
         ${nextCost != null ? `
         <button class="btn gold" id="a-upgrade" ${S.cash >= nextCost ? "" : "disabled"}>
@@ -908,10 +909,11 @@ function renderPanel() {
         <span class="index-val" id="idx-val">—</span>
         <span class="index-delta" id="idx-delta"></span>
       </div>
+      <div class="panel-hint" style="margin:2px 0 0">Indice MAGNAT — la moyenne des 9 valeurs de la cote.</div>
       <canvas id="index-chart" width="680" height="300"></canvas>
       <div id="bourse-event"></div>
       ${Object.keys(TICKERS).map((sym, i) => {
-        const st = S.stocks[sym], t = TICKERS[sym];
+        const t = TICKERS[sym];
         return `
         <div class="stock-card" data-sym="${sym}" style="animation-delay:${i * 45}ms">
           <div class="sc-top">
@@ -925,35 +927,22 @@ function renderPanel() {
               <div class="sc-price" data-price></div>
             </div>
           </div>
-          <div class="sc-bottom">
-            <canvas class="sc-spark" data-spark="${sym}" width="184" height="56"></canvas>
+          <canvas class="sc-chart" data-spark="${sym}" width="640" height="96"></canvas>
+          <div class="sc-actions">
             <span class="div-chip">Div ${(t.div * 100).toFixed(1).replace(".", ",")} %/j</span>
             <span class="sc-pnl" data-pnl></span>
+            <button class="btn sell mini" data-trade="-10" data-tsym="${sym}">Vendre 10</button>
+            <button class="btn mini" data-trade="10" data-tsym="${sym}">Acheter 10</button>
           </div>
-          ${expandedSym === sym ? `
-          <div class="sc-detail">
-            <div class="meta">${t.desc} — dividendes versés à la clôture de 18h.</div>
-            <div class="trade-row">
-              <button class="btn" data-trade="10"  ${S.cash >= 10 * st.price ? "" : "disabled"}>Acheter ×10</button>
-              <button class="btn" data-trade="100" ${S.cash >= 100 * st.price ? "" : "disabled"}>×100</button>
-              <button class="btn sell" data-trade="-10" ${st.shares > 0 ? "" : "disabled"}>Vendre ×10</button>
-              <button class="btn sell" data-trade="${-st.shares}" ${st.shares > 0 ? "" : "disabled"}>Tout</button>
-            </div>
-          </div>` : ""}
         </div>`;
       }).join("")}
       <div class="proto-note">Prototype : bourse déverrouillée d'office (en prod : après le premier monopole).<br>
       Économie simulée — en production, les cours réagiront à l'activité réelle des joueurs.</div>`;
 
-    c.querySelectorAll(".stock-card").forEach((card) =>
-      card.addEventListener("click", () => {
-        expandedSym = expandedSym === card.dataset.sym ? null : card.dataset.sym;
-        renderPanel();
-      }));
     c.querySelectorAll("[data-trade]").forEach((b) =>
       b.addEventListener("click", (e) => {
         e.stopPropagation();
-        trade(expandedSym, parseInt(b.dataset.trade, 10));
+        trade(b.dataset.tsym, parseInt(b.dataset.trade, 10));
       }));
 
     refreshBourseTexts();
@@ -1040,25 +1029,36 @@ function renderPanel() {
   $("#panel").scrollTop = scroll;
 }
 
-// petite courbe d'une carte de valeur
+// courbe vivante d'une carte de valeur : aire dégradée + point doré
 function drawSpark(cv, data) {
   if (!cv || data.length < 2) return;
   const ctx = cv.getContext("2d");
   const min = Math.min(...data), max = Math.max(...data);
   const range = max - min || 1;
-  const W = cv.width, Hh = cv.height, pad = 5;
+  const W = cv.width, Hh = cv.height, pad = 6;
+  const X = (i) => pad + (i / (data.length - 1)) * (W - 2 * pad);
+  const Y = (v) => Hh - pad - ((v - min) / range) * (Hh - 2.4 * pad);
   ctx.clearRect(0, 0, W, Hh);
   const up = data[data.length - 1] >= data[0];
-  ctx.strokeStyle = up ? "#0E9B62" : "#E2604C";
-  ctx.lineWidth = 4;
+  const base = up ? (night ? "92,224,161" : "14,155,98") : "226,96,76";
+  const grad = ctx.createLinearGradient(0, 0, 0, Hh);
+  grad.addColorStop(0, `rgba(${base},0.28)`);
+  grad.addColorStop(1, `rgba(${base},0)`);
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.moveTo(X(0), Hh - pad);
+  data.forEach((v, i) => ctx.lineTo(X(i), Y(v)));
+  ctx.lineTo(X(data.length - 1), Hh - pad);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = up ? (night ? "#5CE0A1" : "#0E9B62") : "#E2604C";
+  ctx.lineWidth = 3.5;
   ctx.lineJoin = "round";
   ctx.beginPath();
-  data.forEach((v, i) => {
-    const x = pad + (i / (data.length - 1)) * (W - 2 * pad);
-    const y = Hh - pad - ((v - min) / range) * (Hh - 2 * pad);
-    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-  });
+  data.forEach((v, i) => (i ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v))));
   ctx.stroke();
+  ctx.fillStyle = "#E9C05C";
+  ctx.beginPath(); ctx.arc(X(data.length - 1), Y(data[data.length - 1]), 4, 0, 7); ctx.fill();
 }
 
 // mise à jour chirurgicale des textes de la Bourse (aucun re-rendu du DOM)
@@ -1108,6 +1108,10 @@ function refreshBourseTexts() {
     } else {
       pe.textContent = "";
     }
+    card.querySelectorAll("[data-trade]").forEach((b) => {
+      const q = parseInt(b.dataset.trade, 10);
+      b.disabled = q > 0 ? S.cash < q * st.price : st.shares <= 0;
+    });
   }
 }
 
@@ -1126,13 +1130,13 @@ function startBourseLive() {
     while (liveDisp.length > target.length) liveDisp.shift();
     for (let i = 0; i < target.length; i++) liveDisp[i] += (target[i] - liveDisp[i]) * 0.09;
     drawIndexChart(liveDisp);
-    if (liveFrame++ % 10 === 0) {
-      refreshBourseTexts();
-      document.querySelectorAll(".sc-spark").forEach((cv) => {
+    if (liveFrame % 5 === 0) {
+      document.querySelectorAll(".sc-chart").forEach((cv) => {
         const st = S.stocks[cv.dataset.spark];
         if (st) drawSpark(cv, st.hist.slice(-30).concat(st.price));
       });
     }
+    if (liveFrame++ % 12 === 0) refreshBourseTexts();
     liveRaf = requestAnimationFrame(loop);
   };
   liveRaf = requestAnimationFrame(loop);
