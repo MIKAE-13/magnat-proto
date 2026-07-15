@@ -876,13 +876,25 @@ function spawnGroup(n) {
   for (let i = 0; i < n; i++) {
     let type = pickEncounterType();
     if (type === "client" && !nearPois.length) type = "valise";
-    // ~30 % des apparitions sont des parchemins notariaux
+    // ~30 % des apparitions sont des parchemins notariaux.
+    // Ciblage : 65 % lieux proches, 25 % n'importe où au village,
+    // 10 % un JOYAU (les lieux les plus chers, même très loin —
+    // tout le monde peut avoir sa part de Tour Eiffel)
     let fragFor = null;
     if (Math.random() < 0.30) {
       const candidates = PLACES.filter((pl) => !S.owned[pl.id]);
       if (candidates.length) {
-        const close = candidates.filter((pl) => dist(player.lat, player.lon, pl.lat, pl.lon) < 350);
-        const pool = close.length && Math.random() < 0.7 ? close : candidates;
+        const roll = Math.random();
+        let pool;
+        if (roll < 0.10) {
+          const sorted = candidates.slice().sort((a, b) => b.price - a.price);
+          pool = sorted.slice(0, Math.max(3, Math.ceil(sorted.length * 0.25)));
+        } else if (roll < 0.75) {
+          const close = candidates.filter((pl) => dist(player.lat, player.lon, pl.lat, pl.lon) < 350);
+          pool = close.length ? close : candidates;
+        } else {
+          pool = candidates;
+        }
         type = "parchemin";
         fragFor = pool[Math.floor(Math.random() * pool.length)].id;
       }
@@ -1808,7 +1820,7 @@ function renderPanel() {
       </div>
       <div class="walk-line">⭐ <b>Niveau ${S.level}/${LEVEL_CAP}</b> · ${Math.round(S.xp)}/${xpNeeded(S.level)} XP · ☕ ×${S.items.cafe || 0} · 🥐 ×${S.items.croissant || 0}</div>
       ${S.level < LEVEL_CAP ? `<div class="walk-line">🎁 Niveau ${S.level + 1} : +${fmt(levelCash(S.level + 1))} et provisions${PERKS[S.level + 1] ? ` · <b>${PERKS[S.level + 1]}</b>` : ""}</div>` : `<div class="walk-line">👑 <b>Légende de Mouriès</b> — niveau maximum atteint.</div>`}
-      ${Object.keys(S.frags).length ? `<div class="cust-label" style="margin:4px 0 6px">📜 COLLECTIONS EN COURS</div>` +
+      ${Object.keys(S.frags).length ? `<button class="help-link" id="a-collections" style="display:block;margin:4px 0 6px">📜 COLLECTIONS EN COURS — tout voir →</button>` +
         Object.keys(S.frags)
           .sort((a, b) => (S.frags[b] / fragsNeeded(byId[b])) - (S.frags[a] / fragsNeeded(byId[a])))
           .slice(0, 3)
@@ -1845,6 +1857,7 @@ function renderPanel() {
         : `<div class="locked"><div class="big">🏚️</div><p>Vous ne possédez rien. C'est réparable.</p></div>`);
     $("#a-help")?.addEventListener("click", () => openPanel("aide"));
     $("#a-perso")?.addEventListener("click", () => openPanel("perso"));
+    $("#a-collections")?.addEventListener("click", () => openPanel("collections"));
     $("#a-collect-all")?.addEventListener("click", () => { collectAll(); renderPanel(); });
     c.querySelectorAll(".prop-card").forEach((row) =>
       row.addEventListener("click", () => {
@@ -1928,6 +1941,32 @@ function renderPanel() {
         if (S.cash < AVATARS[k].price) { notice(`Il vous manque ${fmt(AVATARS[k].price - S.cash)}`); return; }
         buyAvatar(k);
         renderPanel();
+      }));
+  }
+
+  else if (panelTab === "collections") {
+    const ids = Object.keys(S.frags)
+      .filter((id) => byId[id] && !S.owned[id])
+      .sort((a, b) => (S.frags[b] / fragsNeeded(byId[b])) - (S.frags[a] / fragsNeeded(byId[a])));
+    c.innerHTML = `<h2>📜 Collections</h2>
+      <div class="panel-sub">${ids.length} acte${ids.length > 1 ? "s" : ""} en cours de reconstitution ·
+        ${Object.keys(S.owned).length}/${PLACES.length} lieux du village possédés</div>` +
+      (ids.length
+        ? ids.map((id) => {
+            const p = byId[id], need = fragsNeeded(p);
+            return `<div class="deal-card frag-card" data-id="${id}">
+              <div class="deal-head">📜 <b>${p.name}</b>
+                <span class="deal-km">${S.frags[id]}/${need}</span>
+              </div>
+              <div class="deal-bar"><div class="deal-fill" style="width:${(S.frags[id] / need) * 100}%"></div></div>
+            </div>`;
+          }).join("")
+        : `<div class="locked"><div class="big">📜</div><p>Aucun acte en cours. Ramassez des parchemins scellés dans les rues — chaque fragment vous rapproche d'une propriété gratuite.</p></div>`) +
+      `<div class="proto-note">Les parchemins visent surtout les lieux que vous longez — mais les joyaux du village circulent aussi, où que vous soyez.<br>Un jour, à l'échelle nationale : votre part de la Tour Eiffel (en 100 morceaux).</div>`;
+    c.querySelectorAll(".frag-card").forEach((row) =>
+      row.addEventListener("click", () => {
+        closePanel();
+        openSheet(byId[row.dataset.id]);
       }));
   }
 

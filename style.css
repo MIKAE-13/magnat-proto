@@ -1522,3 +1522,7 @@ body.night .tab.active { box-shadow: none; }
 }
 .ob-btn { border-radius: 999px; border-width: 1.5px; }
 .ob-btn.primary { border: none; }
+
+/* écran Collections */
+.frag-card { cursor: pointer; transition: transform 0.1s; }
+.frag-card:active { transform: scale(0.98); }
