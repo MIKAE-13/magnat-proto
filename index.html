@@ -6,6 +6,9 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#F6F1E4">
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="assets/icon-192.png">
+  <link rel="icon" type="image/png" href="assets/icon-192.png">
   <title>MAGNAT — Mouriès</title>
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
   <link rel="stylesheet" href="style.css">
@@ -50,6 +53,7 @@
 
   <!-- Panneau dev / balade -->
   <div id="dev-panel">
+    <button id="btn-sound" title="Sons du jeu">🔊</button>
     <button id="btn-sim" title="Se déplacer en touchant la carte">🚶 balade</button>
     <button id="btn-speed" title="Accélérer le temps du jeu">⏩ ×1</button>
     <button id="btn-theme" title="Forcer jour/nuit">🌗</button>

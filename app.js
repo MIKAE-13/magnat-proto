@@ -148,6 +148,7 @@ function freshState() {
     journalRead: 0,
     indexHist: [35_420],
     indexDayOpen: 35_420,
+    muted: false,
   };
 }
 
@@ -309,6 +310,7 @@ function questBump(id) {
   if (q.progress >= def.target) {
     q.done = true;
     S.cash += def.reward;
+    sfx("quest");
     toast(`🎯 Défi accompli : ${def.label} — +${fmt(def.reward)}`, "gain");
   }
   updateHUD(); save();
@@ -358,6 +360,7 @@ function buy(p) {
     toast(`📜 ${p.name} est à vous !`);
   }
   burst(p, 10);
+  sfx("buy");
   tip("buy", "Votre bien produit des loyers en continu. Revenez encaisser la pièce 🪙 — l'accumulation se bloque après 8 h.");
   checkMonopolies(p.cat);
   refreshAllMarkers(); updateHUD(); openSheet(p, true); save();
@@ -369,6 +372,7 @@ function collect(p) {
   S.cash += amount;
   S.owned[p.id].lastCollect = S.gameMs;
   flyCoin(p, `+${fmt(amount)}`);
+  sfx("coin");
   bumpStreak();
   questBump("collect");
   tip("collect", "Passez voir votre bien SUR PLACE : la Tournée du proprio double son loyer pendant 24 h (×3 le week-end).");
@@ -384,6 +388,7 @@ function collectAll() {
   }
   if (total >= 1) {
     S.cash += total;
+    sfx("coin");
     bumpStreak();
     for (let i = 0; i < n; i++) questBump("collect");
     toast(`🪙 Loyers encaissés : +${fmt(total)}`, "gain");
@@ -424,6 +429,7 @@ function checkMonopolies(cat) {
   S.monopolies.push(cat);
   if (S.firstMonopolyDay < 0) S.firstMonopolyDay = gameDay();
   PLACES.filter((p) => p.cat === cat).forEach((p) => burst(p, 14));
+  sfx("mono");
   const meta = CAT_META[cat];
   headline(`<b>LE MONOPOLE DES ${meta.plural.toUpperCase()} DE MOURIÈS EST À VOUS.</b>
     Les loyers de la catégorie doublent. Le prix de tout augmente mystérieusement.`);
@@ -747,6 +753,49 @@ function updateCoach() {
   }
 }
 $("#coach").addEventListener("click", () => { if (coachAction) coachAction(); });
+
+// ---------------------------------------------------------------------------
+// Sons (WebAudio synthétisé — zéro fichier à télécharger)
+// ---------------------------------------------------------------------------
+let audioCtx = null;
+function ensureAudio() {
+  if (!audioCtx) {
+    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+  }
+  if (audioCtx && audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
+}
+document.addEventListener("pointerdown", ensureAudio, { once: true });
+
+function note(freq, t0, dur, type = "sine", vol = 0.12) {
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.type = type;
+  o.frequency.value = freq;
+  g.gain.setValueAtTime(vol, t0);
+  g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+  o.connect(g).connect(audioCtx.destination);
+  o.start(t0); o.stop(t0 + dur);
+}
+
+function sfx(kind) {
+  if (S.muted || !audioCtx || audioCtx.state !== "running") return;
+  const t = audioCtx.currentTime;
+  try {
+    if (kind === "coin") {
+      note(880, t, 0.09, "sine", 0.10);
+      note(1318, t + 0.07, 0.14, "sine", 0.10);
+    } else if (kind === "buy") {
+      note(587, t, 0.10, "triangle", 0.14);
+      note(880, t + 0.08, 0.12, "triangle", 0.14);
+      note(1174, t + 0.16, 0.22, "triangle", 0.12);
+    } else if (kind === "mono") {
+      [523, 659, 784, 1046, 1318].forEach((f, i) => note(f, t + i * 0.09, 0.25, "square", 0.07));
+    } else if (kind === "quest") {
+      note(987, t, 0.10, "sine", 0.09);
+      note(1479, t + 0.09, 0.18, "sine", 0.09);
+    }
+  } catch (e) {}
+}
 
 // conseil contextuel — montré une seule fois par clé
 function tip(key, text) {
@@ -1444,6 +1493,11 @@ function coinImage() {
   return x.getImageData(0, 0, 64, 64);
 }
 
+// certaines catégories ont une 2e variante de bâtiment (anti-répétition)
+const VARIANT_CATS = ["commerce", "artisanat"];
+const sprName = (p) =>
+  p.cat + (VARIANT_CATS.includes(p.cat) && parseInt(p.id.slice(1), 10) % 2 ? "-b" : "");
+
 async function loadSprites() {
   await Promise.all(Object.keys(CAT_META).map(async (cat) => {
     const r = await map.loadImage(`assets/${cat}.png`);
@@ -1456,6 +1510,15 @@ async function loadSprites() {
       if (!map.hasImage("n-" + cat)) map.addImage("n-" + cat, r.data);
     } catch (e) { nightSprites = false; }
   }));
+  // variantes optionnelles (absentes = retombe sur le sprite de base)
+  await Promise.all(VARIANT_CATS.flatMap((cat) => [
+    map.loadImage(`assets/${cat}-b.png`)
+      .then((r) => { if (!map.hasImage(`d-${cat}-b`)) map.addImage(`d-${cat}-b`, r.data); })
+      .catch(() => {}),
+    map.loadImage(`assets/${cat}-b-night.png`)
+      .then((r) => { if (!map.hasImage(`n-${cat}-b`)) map.addImage(`n-${cat}-b`, r.data); })
+      .catch(() => {}),
+  ]));
   if (!map.hasImage("coin")) map.addImage("coin", coinImage());
   spritesReady = true;
 }
@@ -1477,7 +1540,7 @@ function placesGeoJSON() {
         type: "Feature",
         geometry: { type: "Point", coordinates: [p.lon, p.lat] },
         properties: {
-          id: p.id, cat: p.cat, state, tag,
+          id: p.id, cat: p.cat, spr: sprName(p), state, tag,
           coin: !!(o && accrued(p) >= 1),
           sort: -p.lat,
         },
@@ -1509,7 +1572,9 @@ function buildPlaceLayers() {
     map.addLayer({
       id: "place-bld", type: "symbol", source: "places",
       layout: {
-        "icon-image": ["concat", spritePrefix(), ["get", "cat"]],
+        "icon-image": ["coalesce",
+          ["image", ["concat", spritePrefix(), ["get", "spr"]]],
+          ["image", ["concat", spritePrefix(), ["get", "cat"]]]],
         "icon-size": ["interpolate", ["linear"], ["zoom"], 13, 0.10, 15, 0.20, 16, 0.30, 17.5, 0.46],
         "icon-anchor": "bottom",
         "icon-allow-overlap": true,
@@ -1567,6 +1632,13 @@ const refreshMarker = () => refreshAllMarkers();
 // ---------------------------------------------------------------------------
 // Panneau dev
 // ---------------------------------------------------------------------------
+$("#btn-sound").textContent = S.muted ? "🔇" : "🔊";
+$("#btn-sound").addEventListener("click", () => {
+  S.muted = !S.muted;
+  $("#btn-sound").textContent = S.muted ? "🔇" : "🔊";
+  if (!S.muted) { ensureAudio(); sfx("coin"); }
+  save();
+});
 $("#btn-sim").addEventListener("click", () => {
   simMode = !simMode;
   $("#btn-sim").classList.toggle("on", simMode);
@@ -1637,3 +1709,8 @@ fetch("https://tiles.openfreemap.org/styles/positron")
       '<div style="padding:40px;text-align:center;font-family:sans-serif">' +
       "<h2>MAGNAT</h2><p>Impossible de charger la carte (connexion ?).<br>Réessayez.</p></div>";
   });
+
+// PWA : coquille hors-ligne + installation sur l'écran d'accueil
+if ("serviceWorker" in navigator && location.protocol === "https:") {
+  navigator.serviceWorker.register("sw.js").catch(() => {});
+}
