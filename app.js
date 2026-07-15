@@ -41,13 +41,13 @@ const HOUR = 3_600_000, DAY = 24 * HOUR;
 
 // Les rivaux : quatre magnats IA, chacun son style, sa cadence, ses cibles
 const NPCS = {
-  betonneur:   { name: "Jean-Mi Bétonneur",   firstDay: 2, every: 4, prefs: ["commerce", "restaurant"], quote: "Le village a besoin de renouveau.",
+  betonneur:   { name: "Jean-Mi Bétonneur",   firstDay: 1, every: 4, prefs: ["commerce", "restaurant"], quote: "Le village a besoin de renouveau.",
                  arrival: "a été aperçu chez le notaire avec un carnet de chèques" },
-  vieilargent: { name: "Gérard Vieilargent",  firstDay: 4, every: 5, prefs: ["culture", "artisanat"],   quote: "Le patrimoine ne se discute pas, il s'achète.",
+  vieilargent: { name: "Gérard Vieilargent",  firstDay: 3, every: 5, prefs: ["culture", "artisanat"],   quote: "Le patrimoine ne se discute pas, il s'achète.",
                  arrival: "fait le tour des moulins en berline de collection" },
-  kevin:       { name: "Kevin de StartupBro", firstDay: 6, every: 5, prefs: ["cafe", "bar"],            quote: "On va pivoter ce village en hub.",
+  kevin:       { name: "Kevin de StartupBro", firstDay: 5, every: 5, prefs: ["cafe", "bar"],            quote: "On va pivoter ce village en hub.",
                  arrival: "a demandé le débit de la fibre au café" },
-  baronne:     { name: "La Baronne",          firstDay: 8, every: 6, prefs: ["restaurant", "sport"],    quote: "Tout ceci manquait cruellement de standing.",
+  baronne:     { name: "La Baronne",          firstDay: 7, every: 6, prefs: ["restaurant", "sport"],    quote: "Tout ceci manquait cruellement de standing.",
                  arrival: "a fait livrer douze malles à l'hôtel particulier" },
 };
 const NPC_MAX_PROPS = 4;
@@ -438,7 +438,7 @@ async function discoverAround(lat, lon) {
     const added = addPlaces(fresh);
     savePoiCache();
     if (added > 0) {
-      journal(`Votre notaire a répertorié <b>${added} affaire${added > 1 ? "s" : ""}</b> dans le secteur. Tout s'achète, partout.`);
+      journal(`EXPANSION — vous découvrez un nouveau secteur : <b>${added} lieu${added > 1 ? "x" : ""} réel${added > 1 ? "s" : ""} à acheter</b> rejoi${added > 1 ? "gnent" : "nt"} la carte (commerces, monuments et adresses du coin). La France entière est à vendre.`);
       tip("decouverte", "La France entière est à vendre : les vrais commerces apparaissent sur la carte en explorant — même prix pour tous les joueurs, cadastre commun.");
       updateHUD();
     }
@@ -1033,7 +1033,10 @@ function npcTick() {
       toast(`👀 ${n.name} rôde dans le village…`);
     }
     if (d < n.firstDay) continue;
-    if (d - (S.npcLast[key] ?? 0) < n.every) continue;
+    // premier achat DÈS firstDay (l'ancien « ?? 0 » repoussait le premier
+    // achat de `every` jours — le village semblait sans rivaux)
+    const lastBuy = S.npcLast[key];
+    if (lastBuy !== undefined && d - lastBuy < n.every) continue;
     const holdings = Object.values(S.npcOwners).filter((k) => k === key).length;
     if (holdings >= NPC_MAX_PROPS) continue;
     S.npcLast[key] = d;
@@ -1161,16 +1164,26 @@ function spawnGroup(n) {
     if (Math.random() < 0.30) {
       const candidates = PLACES.filter((pl) => !S.owned[pl.id]);
       if (candidates.length) {
-        const roll = Math.random();
-        let pool;
-        if (roll < 0.10) {
-          const sorted = candidates.slice().sort((a, b) => b.price - a.price);
-          pool = sorted.slice(0, Math.max(3, Math.ceil(sorted.length * 0.25)));
-        } else if (roll < 0.75) {
-          const close = candidates.filter((pl) => dist(player.lat, player.lon, pl.lat, pl.lon) < 350);
-          pool = close.length ? close : candidates;
+        // LA PERSÉVÉRANCE D'ABORD : 60 % des parchemins font avancer une
+        // collection DÉJÀ commencée — sinon, avec des centaines de lieux
+        // répertoriés, chaque parchemin ouvrirait un acte différent et
+        // aucune collection n'aboutirait jamais
+        const open = Object.keys(S.frags).filter((id) =>
+          byId[id] && !S.owned[id] && S.frags[id] > 0 && S.frags[id] < fragsNeeded(byId[id]));
+        let pool = null;
+        if (open.length && Math.random() < 0.60) {
+          pool = open.map((id) => byId[id]);
         } else {
-          pool = candidates;
+          const roll = Math.random();
+          if (roll < 0.10) {
+            const sorted = candidates.slice().sort((a, b) => b.price - a.price);
+            pool = sorted.slice(0, Math.max(3, Math.ceil(sorted.length * 0.25)));
+          } else if (roll < 0.75) {
+            const close = candidates.filter((pl) => dist(player.lat, player.lon, pl.lat, pl.lon) < 350);
+            pool = close.length ? close : candidates;
+          } else {
+            pool = candidates;
+          }
         }
         type = "parchemin";
         fragFor = pool[Math.floor(Math.random() * pool.length)].id;
@@ -2043,6 +2056,19 @@ function renderPanel() {
           </div>
         </div>`;
       }).join("")}
+      <div class="stock-card" style="opacity:.72">
+        <div class="sc-top">
+          <div class="sc-emoji" style="font-size:26px">🔔</div>
+          <div class="sc-name">
+            <b>VOTRE IPO — la Bourse des Magnats</b>
+            <span class="sc-pos">Introduisez votre propre empire en bourse</span>
+          </div>
+          <div class="sc-right"><div class="sc-price">🔒 10 M₣</div></div>
+        </div>
+        <div class="panel-hint" style="margin:6px 0 2px">À 10 000 000 ₣ de patrimoine : vendez 10 à 25 % de votre empire,
+        encaissez le capital, versez des dividendes à vos actionnaires — et apprenez à vivre avec leur impatience.
+        D'abord : les rivaux cotés (BÉTONNEUR SA, VIEILARGENT & ASSOCIÉS…), bientôt.</div>
+      </div>
       <div class="proto-note">Cote NATIONALE en temps réel — les mêmes cours pour tous les joueurs de France,
       poussés par l'activité réelle : achats de commerces, ordres en bourse, tuyaux d'Informateur.<br>
       Prototype : bourse déverrouillée d'office (en prod : après le premier monopole).</div>`;
@@ -3031,6 +3057,8 @@ fetch("https://tiles.openfreemap.org/styles/positron")
       style: recolor(style, pal()),
       center: CENTER,
       zoom: 15.6,
+      minZoom: 13,     // dézoom limité à l'échelle du quartier, comme Pokémon GO
+      maxZoom: 18.5,
       pitch: 55,
       attributionControl: { compact: true },
     });
