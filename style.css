@@ -1583,3 +1583,9 @@ body.night .tab.active { box-shadow: none; }
 .tab.active { color: var(--emerald); }
 svg.tab-ic { height: 24px; width: 24px; filter: none; opacity: 0.75; }
 .tab.active svg.tab-ic { filter: none; opacity: 1; transform: scale(1.12) translateY(-1px); }
+
+/* ---------- iOS : taper vite ne doit jamais zoomer la page ---------- */
+button, .btn, .tab, .mg-item, .shop-card, .ward-card, .stock-card, .prop-card,
+.frag-card, .quest-item, .lb-row, input {
+  touch-action: manipulation;
+}

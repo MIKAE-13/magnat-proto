@@ -997,8 +997,17 @@ function indexValue() {
   return mean * 35_420;
 }
 
+// « max » = tout ce que les liquidités permettent · « -max » = toute la position
+function tradeQty(sym, spec) {
+  const st = S.stocks[sym];
+  if (spec === "max") return Math.floor(S.cash / st.price);
+  if (spec === "-max") return -st.shares;
+  return parseInt(spec, 10);
+}
+
 function trade(sym, qty) {
   const st = S.stocks[sym];
+  if (!qty) return;
   if (qty > 0) {
     const cost = qty * st.price;
     if (S.cash < cost) return;
@@ -2051,8 +2060,10 @@ function renderPanel() {
             <span class="shock-badge" data-shock hidden></span>
             <span class="div-chip">Div ${(t.div * 100).toFixed(1).replace(".", ",")} %/j</span>
             <span class="sc-pnl" data-pnl></span>
+            <button class="btn sell mini" data-trade="-max" data-tsym="${sym}">Vendre tout</button>
             <button class="btn sell mini" data-trade="-10" data-tsym="${sym}">Vendre 10</button>
             <button class="btn mini" data-trade="10" data-tsym="${sym}">Acheter 10</button>
+            <button class="btn mini" data-trade="max" data-tsym="${sym}">Acheter max</button>
           </div>
         </div>`;
       }).join("")}
@@ -2076,7 +2087,7 @@ function renderPanel() {
     c.querySelectorAll("[data-trade]").forEach((b) =>
       b.addEventListener("click", (e) => {
         e.stopPropagation();
-        trade(b.dataset.tsym, parseInt(b.dataset.trade, 10));
+        trade(b.dataset.tsym, tradeQty(b.dataset.tsym, b.dataset.trade));
       }));
 
     refreshBourseTexts();
@@ -2433,8 +2444,8 @@ function refreshBourseTexts() {
       pe.textContent = "";
     }
     card.querySelectorAll("[data-trade]").forEach((b) => {
-      const q = parseInt(b.dataset.trade, 10);
-      b.disabled = q > 0 ? S.cash < q * st.price : st.shares <= 0;
+      const q = tradeQty(sym, b.dataset.trade);
+      b.disabled = b.dataset.trade.startsWith("-") ? st.shares <= 0 : q < 1 || S.cash < q * st.price;
     });
     // badge « tuyau de l'Informateur » visible 30 min
     const sb = card.querySelector("[data-shock]");
