@@ -702,25 +702,21 @@ let lastRollPos = null;
 let lastSpawnAt = Date.now() - 5.5 * 60_000; // première rencontre sous ~1 min
 
 function spawnGroup(n) {
-  // TOUT se passe à côté du joueur : l'apparition accompagne la marche.
-  // Ancrage seulement sur les commerces qu'on est en train de LONGER (< 150 m).
-  const nearPois = PLACES.filter((p) => dist(player.lat, player.lon, p.lat, p.lon) < 150);
-  let anchor = null;
-  if (nearPois.length && (n > 1 || Math.random() < 0.5)) {
-    anchor = nearPois[Math.floor(Math.random() * nearPois.length)];
-  }
+  // TOUT pop autour du JOUEUR (30-120 m) — jamais ailleurs sur la carte.
+  // Seul le Client Mystère se colle à une vitrine, si une est à portée.
+  const nearPois = PLACES.filter((p) => dist(player.lat, player.lon, p.lat, p.lon) < 140);
   for (let i = 0; i < n; i++) {
-    const type = pickEncounterType();
-    let baseLat, baseLon, placeId = null, r;
-    const ang = Math.random() * 6.283;
-    if (anchor) {
+    let type = pickEncounterType();
+    if (type === "client" && !nearPois.length) type = "valise";
+    let baseLat = player.lat, baseLon = player.lon, placeId = null;
+    let r = 30 + Math.random() * 90;
+    if (type === "client") {
+      const anchor = nearPois[Math.floor(Math.random() * nearPois.length)];
       baseLat = anchor.lat; baseLon = anchor.lon;
       placeId = anchor.id;
-      r = 10 + Math.random() * 40;
-    } else {
-      baseLat = player.lat; baseLon = player.lon;
-      r = 35 + Math.random() * 95;   // toujours à portée de vue du joueur
+      r = 8 + Math.random() * 30;
     }
+    const ang = Math.random() * 6.283;
     S.spawns.push({
       id: "s" + (++S.spawnSeq),
       type, placeId,
@@ -731,7 +727,7 @@ function spawnGroup(n) {
   }
   updateSpawnSource();
   toast(n > 1
-    ? `✨ ${n} rencontres viennent d'apparaître${anchor ? " près de " + anchor.name : ""} !`
+    ? `✨ ${n} rencontres viennent d'apparaître autour de vous !`
     : `${ENCOUNTER_TYPES[S.spawns[S.spawns.length - 1].type].emoji} Une rencontre est apparue près de vous !`);
 }
 
@@ -741,17 +737,19 @@ function spawnAlgorithm(now) {
   if (S.spawns.length !== before) updateSpawnSource();
   if (!player || now - lastSpawnRoll < 20_000) return;
   lastSpawnRoll = now;
-  if (S.spawns.length >= 4) return;
+  // densité dynamique : une rue commerçante grouille, la garrigue est calme
+  const nearby = PLACES.filter((p) => dist(player.lat, player.lon, p.lat, p.lon) < 130).length;
+  const cap = 3 + Math.min(4, Math.floor(nearby / 2)); // 3 (isolé) à 7 (plein cours)
+  if (S.spawns.length >= cap) return;
   const moved = lastRollPos ? dist(player.lat, player.lon, lastRollPos.lat, lastRollPos.lon) : 0;
   lastRollPos = { lat: player.lat, lon: player.lon };
-  // c'est la MARCHE qui fait apparaître : presque rien à l'arrêt,
-  // beaucoup en mouvement — le pop progresse avec le joueur
-  let p = 0.08 + (moved > 50 ? 0.55 : 0);
+  // c'est la MARCHE qui fait apparaître : presque rien à l'arrêt
+  let p = 0.08 + (moved > 50 ? 0.55 : 0) + Math.min(0.15, nearby * 0.02);
   if (now - lastSpawnAt > 6 * 60_000) p = 1;    // pity : jamais bredouille > 6 min
   if (Math.random() > p) return;
   const cluster = Math.random() < 0.33;
-  const room = 4 - S.spawns.length;
-  spawnGroup(Math.min(room, cluster ? 2 + (Math.random() < 0.5 ? 1 : 0) : 1));
+  const size = cluster ? 2 + (Math.random() < 0.5 ? 1 : 0) + (nearby >= 4 ? 1 : 0) : 1;
+  spawnGroup(Math.min(cap - S.spawns.length, size));
   lastSpawnAt = now;
 }
 
@@ -2016,7 +2014,11 @@ function buildPlaceLayers() {
       id: "spawn-icons", type: "symbol", source: "spawns",
       layout: {
         "icon-image": ["get", "icon"],
-        "icon-size": ["interpolate", ["linear"], ["zoom"], 14, 0.16, 16, 0.30, 18, 0.46],
+        // taille réelle : un passant est bien plus petit qu'une maison,
+        // et une valise plus petite qu'un passant
+        "icon-size": ["*",
+          ["match", ["get", "icon"], "sp-valise", 0.62, 1.0],
+          ["interpolate", ["linear"], ["zoom"], 14, 0.06, 16, 0.13, 18, 0.24]],
         "icon-anchor": "bottom",
         "icon-allow-overlap": true,
         "icon-ignore-placement": true,
