@@ -737,18 +737,21 @@ function spawnAlgorithm(now) {
   if (S.spawns.length !== before) updateSpawnSource();
   if (!player || now - lastSpawnRoll < 20_000) return;
   lastSpawnRoll = now;
-  // densité dynamique : une rue commerçante grouille, la garrigue est calme
+  // densité dynamique : ~3-4 rencontres possibles PAR commerce alentour —
+  // une rue commerçante peut grouiller (jusqu'à 15), la garrigue reste calme
   const nearby = PLACES.filter((p) => dist(player.lat, player.lon, p.lat, p.lon) < 130).length;
-  const cap = 3 + Math.min(4, Math.floor(nearby / 2)); // 3 (isolé) à 7 (plein cours)
+  const cap = Math.min(15, 3 + nearby);         // 3 (isolé) → 15 (plein cours)
   if (S.spawns.length >= cap) return;
   const moved = lastRollPos ? dist(player.lat, player.lon, lastRollPos.lat, lastRollPos.lon) : 0;
   lastRollPos = { lat: player.lat, lon: player.lon };
   // c'est la MARCHE qui fait apparaître : presque rien à l'arrêt
-  let p = 0.08 + (moved > 50 ? 0.55 : 0) + Math.min(0.15, nearby * 0.02);
+  let p = 0.08 + (moved > 50 ? 0.55 : 0) + Math.min(0.2, nearby * 0.025);
   if (now - lastSpawnAt > 6 * 60_000) p = 1;    // pity : jamais bredouille > 6 min
   if (Math.random() > p) return;
-  const cluster = Math.random() < 0.33;
-  const size = cluster ? 2 + (Math.random() < 0.5 ? 1 : 0) + (nearby >= 4 ? 1 : 0) : 1;
+  const cluster = Math.random() < (nearby >= 4 ? 0.5 : 0.33);
+  const size = cluster
+    ? 2 + Math.floor(Math.random() * (nearby >= 6 ? 4 : 2))   // 2-5 en zone dense
+    : 1;
   spawnGroup(Math.min(cap - S.spawns.length, size));
   lastSpawnAt = now;
 }
