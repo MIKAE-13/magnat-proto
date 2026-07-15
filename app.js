@@ -681,28 +681,37 @@ let lastSpawnRoll = 0;
 let lastRollPos = null;
 let lastSpawnAt = Date.now() - 5.5 * 60_000; // première rencontre sous ~1 min
 
-function spawnOne() {
-  const type = pickEncounterType();
+function spawnGroup(n) {
   const nearPois = PLACES.filter((p) => dist(player.lat, player.lon, p.lat, p.lon) < 350);
-  let baseLat, baseLon, placeId = null, r, ang = Math.random() * 6.283;
-  if ((type === "client" || Math.random() < 0.6) && nearPois.length) {
-    const anchor = nearPois[Math.floor(Math.random() * nearPois.length)];
-    baseLat = anchor.lat; baseLon = anchor.lon;
-    placeId = anchor.id;
-    r = 15 + Math.random() * 50;
-  } else {
-    baseLat = player.lat; baseLon = player.lon;
-    r = 70 + Math.random() * 190;
+  // une grappe s'ancre sur UN lieu (le « pokestop ») ; un solo peut être libre
+  let anchor = null;
+  if (nearPois.length && (n > 1 || Math.random() < 0.6)) {
+    anchor = nearPois[Math.floor(Math.random() * nearPois.length)];
   }
-  S.spawns.push({
-    id: "s" + (++S.spawnSeq),
-    type, placeId,
-    lat: baseLat + (r / 111320) * Math.sin(ang),
-    lon: baseLon + (r / (111320 * Math.cos((baseLat * Math.PI) / 180))) * Math.cos(ang),
-    exp: Date.now() + (120 + Math.random() * 120) * 1000,
-  });
+  for (let i = 0; i < n; i++) {
+    const type = pickEncounterType();
+    let baseLat, baseLon, placeId = null, r;
+    const ang = Math.random() * 6.283;
+    if (anchor) {
+      baseLat = anchor.lat; baseLon = anchor.lon;
+      placeId = anchor.id;
+      r = 15 + Math.random() * 60;
+    } else {
+      baseLat = player.lat; baseLon = player.lon;
+      r = 70 + Math.random() * 190;
+    }
+    S.spawns.push({
+      id: "s" + (++S.spawnSeq),
+      type, placeId,
+      lat: baseLat + (r / 111320) * Math.sin(ang),
+      lon: baseLon + (r / (111320 * Math.cos((baseLat * Math.PI) / 180))) * Math.cos(ang),
+      exp: Date.now() + (120 + Math.random() * 120) * 1000,
+    });
+  }
   updateSpawnSource();
-  toast(`${ENCOUNTER_TYPES[type].emoji} Une rencontre est apparue près de vous !`);
+  toast(n > 1
+    ? `✨ ${n} rencontres viennent d'apparaître${anchor ? " près de " + anchor.name : ""} !`
+    : `${ENCOUNTER_TYPES[S.spawns[S.spawns.length - 1].type].emoji} Une rencontre est apparue près de vous !`);
 }
 
 function spawnAlgorithm(now) {
@@ -711,13 +720,16 @@ function spawnAlgorithm(now) {
   if (S.spawns.length !== before) updateSpawnSource();
   if (!player || now - lastSpawnRoll < 30_000) return;
   lastSpawnRoll = now;
-  if (S.spawns.length >= 2) return;
+  if (S.spawns.length >= 4) return;
   const moved = lastRollPos ? dist(player.lat, player.lon, lastRollPos.lat, lastRollPos.lon) : 0;
   lastRollPos = { lat: player.lat, lon: player.lon };
   let p = 0.20 + (moved > 80 ? 0.40 : 0);       // marcher attire les rencontres
   if (now - lastSpawnAt > 6 * 60_000) p = 1;    // pity : jamais bredouille > 6 min
   if (Math.random() > p) return;
-  spawnOne();
+  // ~1 vague sur 3 est une GRAPPE de 2-3, façon pokestop
+  const cluster = Math.random() < 0.33;
+  const room = 4 - S.spawns.length;
+  spawnGroup(Math.min(room, cluster ? 2 + (Math.random() < 0.5 ? 1 : 0) : 1));
   lastSpawnAt = now;
 }
 
@@ -736,13 +748,14 @@ function updateSpawnSource() {
   try { map.getSource("spawns")?.setData(spawnsGeoJSON()); } catch (e) {}
 }
 
-// choc boursier ponctuel (tuyaux de l'Informateur)
+// choc boursier ponctuel (tuyaux de l'Informateur) — badge visible 30 min
 function applyShock(sym, pct) {
   const st = S.stocks[sym];
   st.price *= 1 + pct;
   const r = st.price / st.dayOpen;
   if (r > 1.15) st.price = st.dayOpen * 1.15;
   if (r < 0.85) st.price = st.dayOpen * 0.85;
+  st.shock = { pct, at: Date.now() };
 }
 
 function openEncounter(id) {
@@ -1291,6 +1304,7 @@ function renderPanel() {
           </div>
           <canvas class="sc-chart" data-spark="${sym}" width="640" height="96"></canvas>
           <div class="sc-actions">
+            <span class="shock-badge" data-shock hidden></span>
             <span class="div-chip">Div ${(t.div * 100).toFixed(1).replace(".", ",")} %/j</span>
             <span class="sc-pnl" data-pnl></span>
             <button class="btn sell mini" data-trade="-10" data-tsym="${sym}">Vendre 10</button>
@@ -1474,6 +1488,16 @@ function refreshBourseTexts() {
       const q = parseInt(b.dataset.trade, 10);
       b.disabled = q > 0 ? S.cash < q * st.price : st.shares <= 0;
     });
+    // badge « tuyau de l'Informateur » visible 30 min
+    const sb = card.querySelector("[data-shock]");
+    if (sb) {
+      const fresh = st.shock && Date.now() - st.shock.at < 30 * 60_000;
+      sb.hidden = !fresh;
+      if (fresh) {
+        sb.textContent = `🕵️ ${st.shock.pct >= 0 ? "+" : "−"}${Math.abs(st.shock.pct * 100).toFixed(1).replace(".", ",")} %`;
+        sb.className = "shock-badge " + (st.shock.pct >= 0 ? "up" : "down");
+      }
+    }
   }
 }
 

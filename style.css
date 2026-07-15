@@ -771,3 +771,16 @@ body.night #mg-cursor { background: #fff; }
   filter: drop-shadow(0 8px 10px rgba(0,0,0,0.25));
   animation: coin-bob 1.8s ease-in-out infinite;
 }
+
+/* badge « tuyau » sur une valeur touchée par l'Informateur */
+.shock-badge {
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 11px; font-weight: 800;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  animation: toast-pop 0.3s ease-out;
+}
+.shock-badge.up { border: 1.5px solid var(--emerald); color: var(--emerald); background: var(--emerald-soft); }
+.shock-badge.down { border: 1.5px solid var(--coral); color: var(--coral); background: rgba(226, 96, 76, 0.12); }
+.shock-badge[hidden] { display: none; }
