@@ -494,7 +494,7 @@ const inRange = (p) => player && dist(player.lat, player.lon, p.lat, p.lon) <= p
 
 function buy(p) {
   const cost = priceToPay(p);
-  if (S.cash < cost || S.owned[p.id]) return;
+  if (S.cash < cost || S.owned[p.id] || rivalPlayerOf(p.id)) return;
   const fromNpc = npcOf(p.id);
   S.cash -= cost;
   delete S.npcOwners[p.id];
@@ -516,6 +516,7 @@ function buy(p) {
   sfx("buy");
   tip("buy", "Votre bien produit des loyers en continu. Revenez encaisser la pièce 🪙 — l'accumulation se bloque après 8 h.");
   checkMonopolies(p.cat);
+  pushProperty(p.id, "achat");
   refreshAllMarkers(); updateHUD(); openSheet(p, true); save();
 }
 
@@ -568,6 +569,7 @@ function upgrade(p) {
   journal(`<b>${p.name}</b> passe en « ${ECO.upNames[o.level - 1]} ». Le quartier murmure.`);
   toast(`🏗️ ${ECO.upNames[o.level - 1]} : loyer ×${ECO.upMult[o.level - 1]}`);
   questBump("invest");
+  pushProperty(p.id);
   refreshMarker(p); updateHUD(); openSheet(p, true); save();
 }
 
@@ -591,6 +593,8 @@ function sellPlace(p) {
   sfx("coin");
   burst(p, 6);
   journal(`Vous cédez <b>${p.name}</b> pour ${fmt(gain)}. Le village jase, le notaire encaisse.`);
+  removeProperty(p.id);
+  delete remoteProps[p.id];
   $("#sheet").hidden = true;
   sheetPlace = null;
   refreshAllMarkers(); updateHUD(); updateCoach(); save();
@@ -830,6 +834,7 @@ function collectParchment(s) {
 
 function acquireByFrags(p) {
   const victim = npcOf(p.id);
+  const rp = rivalPlayerOf(p.id); // capturé AVANT de devenir propriétaire
   delete S.frags[p.id];
   delete S.npcOwners[p.id];
   delete S.discounts[p.id];
@@ -838,7 +843,10 @@ function acquireByFrags(p) {
   sfx("mono");
   addXp(60);
   questBump("invest");
-  if (victim) {
+  if (rp) {
+    headline(`<b>OPA RÉUSSIE.</b> Les parchemins réunis font de vous le propriétaire légal de ${p.name} — ${esc(rp.owner_pseudo)} l'apprend par huissier.`);
+    journal(`Expropriation dans les règles de l'art : l'acte de <b>${p.name}</b> reconstitué parchemin par parchemin — <b>${esc(rp.owner_pseudo)}</b>, magnat bien réel, dépossédé. « C'est du vol légal. » Exactement.`);
+  } else if (victim) {
     const n = NPCS[victim];
     headline(`<b>ACTE RECONSTITUÉ.</b> Les parchemins réunis font de vous le propriétaire légal de ${p.name} — ${n.name} l'apprend par huissier.`);
     journal(`Coup de maître : l'acte notarial de <b>${p.name}</b> reconstitué parchemin par parchemin — ${n.name} exproprié dans les règles de l'art. « C'est du vol légal », fulmine-t-il. Exactement.`);
@@ -848,6 +856,7 @@ function acquireByFrags(p) {
     journal(`L'acte notarial de <b>${p.name}</b> reconstitué parchemin par parchemin : propriété acquise sans débourser un franc.`);
   }
   checkMonopolies(p.cat);
+  pushProperty(p.id, "parchemins");
   refreshAllMarkers(); updateHUD(); save();
 }
 
@@ -1627,6 +1636,22 @@ function openSheet(p, silent = false) {
         sellPlace(p);
       }
     });
+  } else if (rivalPlayerOf(p.id)) {
+    // propriété d'un VRAI joueur : pas de rachat — seule l'OPA par parchemins
+    const rp = rivalPlayerOf(p.id);
+    const got = S.frags[p.id] || 0, need = fragsNeeded(p);
+    body.innerHTML = `
+      <div class="sheet-row">
+        <div class="stat">🔒 Propriété de <b>${esc(rp.owner_pseudo)}</b>${rp.level ? ` · 🏗️ ${ECO.upNames[rp.level - 1]}` : ""}</div>
+        <div class="stat">📜 Parchemins <b>${got}/${need}</b></div>
+      </div>
+      <div class="deal-card">
+        <div class="deal-head">📜 <b>Acte en reconstitution</b><span class="deal-km">${got}/${need}</span></div>
+        <div class="deal-bar"><div class="deal-fill" style="width:${(got / need) * 100}%"></div></div>
+      </div>
+      <div class="hint">Ce lieu appartient à un autre magnat — il ne se rachète pas. Réunissez ses ${need} parchemins notariaux en arpentant le village et il change de mains. C'est du vol légal.</div>
+      ${!near ? '<div class="btn-row"><button class="btn ghost" id="a-goto">🚶 S\'y rendre</button></div>' : ""}`;
+    $("#a-goto")?.addEventListener("click", () => goTo(p));
   } else {
     const cost = priceToPay(p);
     const npcOwned = npcOf(p.id);
@@ -1818,6 +1843,22 @@ function renderPanel() {
       <div class="btn-row" style="margin-bottom:12px">
         <button class="btn gold" id="a-perso">🕴️ Personnaliser mon personnage</button>
       </div>
+      <div class="cust-label" style="margin:14px 0 8px">🌍 LE MONDE — CLASSEMENT DES MAGNATS</div>
+      ${me ? `
+        <div class="walk-line">Connecté : <b>${esc(myPseudo())}</b> — vos acquisitions sont inscrites au cadastre mondial.</div>
+        ${leaderboard.length ? `<div class="lb">${leaderboard.map((r, i) => `
+          <div class="lb-row ${me && r.id === me.id ? "me" : ""}">
+            <span class="lb-rank">${["🥇", "🥈", "🥉"][i] || i + 1}</span>
+            <span class="lb-name">${esc(r.pseudo)}</span>
+            <span class="lb-lvl">⭐ ${r.level}</span>
+            <span class="lb-worth">${fmt(r.worth)}</span>
+          </div>`).join("")}</div>` : `<div class="walk-line">Le classement se remplit dès que les magnats prospèrent…</div>`}
+      ` : `
+        <div class="walk-line">Un compte, et le monde vous voit : votre nom sur vos propriétés, le classement national — et l'expropriation par parchemins des vrais joueurs.</div>
+        <div class="btn-row" style="margin-bottom:12px">
+          <button class="btn" id="a-world">🌍 Rejoindre le monde commun</button>
+        </div>
+      `}
       <div class="walk-line">⭐ <b>Niveau ${S.level}/${LEVEL_CAP}</b> · ${Math.round(S.xp)}/${xpNeeded(S.level)} XP · ☕ ×${S.items.cafe || 0} · 🥐 ×${S.items.croissant || 0}</div>
       ${S.level < LEVEL_CAP ? `<div class="walk-line">🎁 Niveau ${S.level + 1} : +${fmt(levelCash(S.level + 1))} et provisions${PERKS[S.level + 1] ? ` · <b>${PERKS[S.level + 1]}</b>` : ""}</div>` : `<div class="walk-line">👑 <b>Légende de Mouriès</b> — niveau maximum atteint.</div>`}
       ${Object.keys(S.frags).length ? `<button class="help-link" id="a-collections" style="display:block;margin:4px 0 6px">📜 COLLECTIONS EN COURS — tout voir →</button>` +
@@ -1857,6 +1898,7 @@ function renderPanel() {
         : `<div class="locked"><div class="big">🏚️</div><p>Vous ne possédez rien. C'est réparable.</p></div>`);
     $("#a-help")?.addEventListener("click", () => openPanel("aide"));
     $("#a-perso")?.addEventListener("click", () => openPanel("perso"));
+    $("#a-world")?.addEventListener("click", () => { closePanel(); $("#login").hidden = false; });
     $("#a-collections")?.addEventListener("click", () => openPanel("collections"));
     $("#a-collect-all")?.addEventListener("click", () => { collectAll(); renderPanel(); });
     c.querySelectorAll(".prop-card").forEach((row) =>
@@ -2234,13 +2276,13 @@ const DAY_PAL = {
   bg: "#F3EEDF", water: "#B9D8D0", green: "#D9E3C4", building: "#E7DFC9",
   road: "#FFFFFF", roadMinor: "#F9F5E9", text: "#6B7280", halo: "#F3EEDF",
   ring: "#0E9B62", tagAfford: "#22262E", tagFar: "#96988A",
-  tagNpc: "#C24A38", tagHalo: "#FFFFFF",
+  tagNpc: "#C24A38", tagPlayer: "#7C3AED", tagHalo: "#FFFFFF",
 };
 const NIGHT_PAL = {
   bg: "#161B26", water: "#1D2734", green: "#1E2822", building: "#242C3C",
   road: "#C9BFA3", roadMinor: "#3B4254", text: "#98A0B0", halo: "#161B26",
   ring: "#5CE0A1", tagAfford: "#E9C05C", tagFar: "#6E7686",
-  tagNpc: "#F07A6A", tagHalo: "#12151E",
+  tagNpc: "#F07A6A", tagPlayer: "#B79CFF", tagHalo: "#12151E",
 };
 const pal = () => (night ? NIGHT_PAL : DAY_PAL);
 
@@ -2537,10 +2579,13 @@ function placesGeoJSON() {
     features: PLACES.map((p) => {
       const o = S.owned[p.id];
       const npc = npcOf(p.id);
-      const state = o ? "owned" : npc ? "npc" : S.cash >= priceToPay(p) ? "afford" : "far";
+      const rp = rivalPlayerOf(p.id);
+      const state = o ? "owned" : rp ? "player" : npc ? "npc" : S.cash >= priceToPay(p) ? "afford" : "far";
       let tag;
       if (o) {
         tag = hasMonopoly(p.cat) ? "MONOPOLE ×2" : o.level > 0 ? "NIV. " + o.level : "";
+      } else if (rp) {
+        tag = rp.owner_pseudo.toUpperCase();
       } else {
         tag = fmt(priceToPay(p));
       }
@@ -2597,7 +2642,8 @@ function buildPlaceLayers() {
       },
       paint: {
         "text-color": ["match", ["get", "state"],
-          "npc", P.tagNpc, "owned", P.ring, "far", P.tagFar, P.tagAfford],
+          "npc", P.tagNpc, "owned", P.ring, "far", P.tagFar,
+          "player", P.tagPlayer, P.tagAfford],
         "text-halo-color": P.tagHalo,
         "text-halo-width": 1.6,
       },
@@ -2679,6 +2725,7 @@ window.magnat = {
   reset: () => { localStorage.removeItem(SAVE_KEY); location.reload(); },
   theme: () => { themeForced = themeForced === null ? !night : null; applyTheme(wantNight()); },
   mute: () => { S.muted = !S.muted; save(); },
+  logout: () => sb?.auth.signOut().then(() => location.reload()),
 };
 
 // ---------------------------------------------------------------------------
@@ -2736,3 +2783,133 @@ fetch("https://tiles.openfreemap.org/styles/positron")
 if ("serviceWorker" in navigator && location.protocol === "https:") {
   navigator.serviceWorker.register("sw.js").catch(() => {});
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// LE MONDE COMMUN (Supabase) : comptes, cadastre partagé, classement
+// ═══════════════════════════════════════════════════════════════════
+const SUPA_URL = "https://ereqnkzbwjqrbwetvswc.supabase.co";
+const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVyZXFua3pid2pxcmJ3ZXR2c3djIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQxMTYwOTcsImV4cCI6MjA5OTY5MjA5N30.PaN-zGTAW0bSkfT6hONm2V7swfpEoDk0NP0xR9zK3KM";
+
+let sb = null;
+let me = null;                 // utilisateur connecté (ou null)
+let remoteProps = {};          // cadastre mondial : place_id -> ligne
+let leaderboard = [];
+
+const myPseudo = () =>
+  (localStorage.getItem("magnat-pseudo") || "Magnat anonyme").slice(0, 20);
+
+// les pseudos viennent d'autres joueurs : toujours échappés avant innerHTML
+function esc(s) {
+  return String(s).replace(/[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function initNet() {
+  if (!window.supabase) return;
+  try {
+    sb = window.supabase.createClient(SUPA_URL, SUPA_KEY);
+    sb.auth.onAuthStateChange((_event, session) => {
+      const was = !!me;
+      me = session?.user || null;
+      if (me && !was) onLogin();
+    });
+  } catch (e) { sb = null; }
+}
+
+async function onLogin() {
+  try {
+    // le profil : créé/actualisé à chaque connexion
+    await sb.from("profiles").upsert({
+      id: me.id, pseudo: myPseudo(), avatar: S.avatar,
+      level: S.level, worth: Math.round(netWorth()),
+    });
+    // lire le cadastre AVANT de publier : on ne s'approprie jamais par
+    // simple connexion un lieu déjà tenu par un autre magnat
+    await fetchWorld();
+    for (const id in S.owned) {
+      const r = remoteProps[id];
+      if (!r || r.owner === me.id) pushProperty(id, "achat");
+    }
+    // cadastre en temps réel
+    sb.channel("cadastre")
+      .on("postgres_changes", { event: "*", schema: "public", table: "properties" }, (payload) => {
+        if (payload.eventType === "DELETE") delete remoteProps[payload.old.place_id];
+        else remoteProps[payload.new.place_id] = payload.new;
+        refreshAllMarkers();
+        if (sheetPlace) openSheet(sheetPlace, true);
+      })
+      .subscribe();
+    setInterval(snapshot, 60_000);
+    tip("monde", "Vous êtes dans le monde commun : vos propriétés portent votre nom, celles des autres magnats apparaissent sur la carte — et leurs parchemins circulent…");
+  } catch (e) { /* mode solo si le réseau flanche */ }
+}
+
+async function fetchWorld() {
+  try {
+    const { data: props } = await sb.from("properties").select("*");
+    remoteProps = {};
+    (props || []).forEach((r) => (remoteProps[r.place_id] = r));
+    const { data: lb } = await sb.from("profiles")
+      .select("id, pseudo, level, worth")
+      .order("worth", { ascending: false })
+      .limit(10);
+    leaderboard = lb || [];
+    refreshAllMarkers();
+    if (panelTab === "empire") renderPanel();
+  } catch (e) {}
+}
+
+function pushProperty(placeId, via) {
+  if (!sb || !me) return;
+  sb.from("properties").upsert({
+    place_id: placeId, owner: me.id, owner_pseudo: myPseudo(),
+    level: S.owned[placeId]?.level || 0,
+    taken_via: via || remoteProps[placeId]?.taken_via || "achat",
+    updated_at: new Date().toISOString(),
+  }).then(() => {});
+}
+
+function removeProperty(placeId) {
+  if (!sb || !me) return;
+  sb.from("properties").delete().eq("place_id", placeId).eq("owner", me.id).then(() => {});
+}
+
+function snapshot() {
+  if (!sb || !me) return;
+  sb.from("profiles").upsert({
+    id: me.id, pseudo: myPseudo(), avatar: S.avatar,
+    level: S.level, worth: Math.round(netWorth()),
+    updated_at: new Date().toISOString(),
+  }).then(() => {});
+}
+
+// un lieu tenu par un AUTRE joueur du monde ?
+function rivalPlayerOf(placeId) {
+  const r = remoteProps[placeId];
+  if (!r || S.owned[placeId]) return null;
+  if (me && r.owner === me.id) return null;
+  return r;
+}
+
+// --- interface de connexion
+$("#login-close").addEventListener("click", () => ($("#login").hidden = true));
+$("#login-send").addEventListener("click", async () => {
+  const pseudo = $("#login-pseudo").value.trim();
+  const email = $("#login-email").value.trim();
+  const msg = $("#login-msg");
+  if (pseudo.length < 2) { msg.textContent = "Un nom de magnat digne de ce nom (2 caractères min.)"; return; }
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { msg.textContent = "Cet e-mail ne semble pas valide."; return; }
+  localStorage.setItem("magnat-pseudo", pseudo);
+  msg.textContent = "Envoi du lien…";
+  try {
+    const { error } = await sb.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: location.origin + location.pathname },
+    });
+    msg.textContent = error
+      ? "Échec de l'envoi : " + error.message
+      : "📬 C'est parti ! Ouvrez le lien reçu par e-mail pour entrer dans le monde.";
+  } catch (e) { msg.textContent = "Le monde est injoignable pour l'instant."; }
+});
+
+initNet();

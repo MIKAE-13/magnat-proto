@@ -111,6 +111,21 @@
     </div>
   </div>
 
+  <!-- Rejoindre le monde commun -->
+  <div id="login" hidden>
+    <div id="login-card">
+      <div class="ob-title" style="font-size:24px">🌍 Le Monde</div>
+      <p>Un compte relie votre empire au monde commun : votre pseudo sur vos
+         propriétés, le classement des magnats — et l'expropriation par
+         parchemins des autres joueurs.</p>
+      <input id="login-pseudo" placeholder="Votre nom de magnat" maxlength="20" autocomplete="nickname">
+      <input id="login-email" type="email" placeholder="Votre e-mail" autocomplete="email">
+      <button id="login-send" class="btn">📬 Recevoir mon lien magique</button>
+      <button id="login-close" class="ob-btn">Plus tard</button>
+      <div id="login-msg" class="hint" style="text-align:center"></div>
+    </div>
+  </div>
+
   <!-- Onboarding -->
   <div id="onboard">
     <div id="onboard-card">
@@ -129,6 +144,7 @@
   </div>
 
   <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <script src="https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
   <script src="places.js"></script>
   <script src="app.js"></script>
 </body>
