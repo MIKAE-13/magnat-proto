@@ -997,3 +997,30 @@ body.night .jr-title { color: #EDE3D2; }
 .jr-body { flex: 1; min-width: 0; }
 .jr-day { font-size: 10px; font-weight: 800; letter-spacing: 0.14em; color: var(--gold); margin-bottom: 2px; }
 .jr-text { font-size: 14px; line-height: 1.42; }
+
+/* ---------- Les Affaires (les « œufs ») ---------- */
+.walk-line {
+  font-size: 12.5px; font-weight: 700;
+  color: var(--ink-soft);
+  margin: 2px 2px 10px;
+}
+.walk-line b { color: var(--emerald); }
+.deal-card {
+  background: var(--card);
+  border: 1px solid var(--gold);
+  border-radius: 16px;
+  padding: 11px 14px 12px;
+  margin-bottom: 9px;
+  box-shadow: var(--shadow), inset 0 1.5px 0 rgba(255,255,255,0.4);
+}
+body.night .deal-card { box-shadow: var(--shadow), inset 0 1.5px 0 rgba(255,255,255,0.05); }
+.deal-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 14px; margin-bottom: 7px; }
+.deal-km { font-size: 12px; font-weight: 800; color: var(--gold); font-variant-numeric: tabular-nums; }
+.deal-bar { height: 9px; border-radius: 5px; background: var(--line); overflow: hidden; }
+.deal-fill {
+  height: 100%;
+  border-radius: 5px;
+  background: linear-gradient(90deg, var(--gold), var(--gold-bright));
+  box-shadow: 0 0 8px rgba(233, 192, 92, 0.5);
+  transition: width 0.5s ease-out;
+}

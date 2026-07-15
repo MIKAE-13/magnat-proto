@@ -162,6 +162,9 @@ function freshState() {
     rentRushUntil: 0,
     scouted: {},       // repérage : placeId -> jour
     discounts: {},     // remises d'achat : placeId -> 0..0.15
+    walk: { total: 0, day: -1, todayKm: 0, credited: 0 },
+    deals: [],         // les « œufs » : dossiers qui se bouclent en km
+    dealDay: -1,
     lastNpcDay: 0,
     lastChargesDay: 0,
     lastQuestDay: -1,
@@ -867,6 +870,74 @@ function resolveEncounter(s, success) {
 }
 
 // ---------------------------------------------------------------------------
+// Les Affaires & les Indemnités kilométriques (les « œufs » de MAGNAT)
+// ---------------------------------------------------------------------------
+const DEAL_TIERS = [
+  { km: 2,  name: "Petit dossier" },
+  { km: 5,  name: "Dossier sérieux" },
+  { km: 10, name: "L'Affaire du siècle" },
+];
+
+function ensureDeals() {
+  const d = gameDay();
+  if (S.dealDay === d || S.deals.length >= 2) return;
+  S.dealDay = d;
+  const r = Math.random();
+  const tier = r < 0.05 ? 2 : r < 0.30 ? 1 : 0;
+  S.deals.push({ id: "dl" + (++S.spawnSeq), tier, km: DEAL_TIERS[tier].km, done: 0 });
+  toast(`🗂️ Un dossier arrive sur votre bureau : « ${DEAL_TIERS[tier].name} » — ${DEAL_TIERS[tier].km} km à pied pour le boucler`);
+  tip("deal", "Les Affaires se bouclent en MARCHANT : vos kilomètres font avancer les dossiers (suivi GPS, app ouverte). Récompense à l'arrivée !");
+  save();
+}
+
+function hatchDeal(deal) {
+  S.deals = S.deals.filter((x) => x !== deal);
+  const syms = Object.keys(TICKERS);
+  const sym = syms[Math.floor(Math.random() * syms.length)];
+  sfx("mono");
+  if (deal.tier === 0) {
+    const gain = Math.round((400 + Math.random() * 500) / 10) * 10;
+    S.cash += gain;
+    headline(`<b>DOSSIER BOUCLÉ.</b> Vos ${deal.km} km de démarchage paient : +${fmt(gain)}.`);
+    journal(`Petit dossier bouclé à la marche : +${fmt(gain)}. Les meilleures affaires se font sur le trottoir.`);
+  } else if (deal.tier === 1) {
+    const gain = Math.round((1500 + Math.random() * 1500) / 10) * 10;
+    S.cash += gain;
+    S.stocks[sym].shares += 20;
+    headline(`<b>DOSSIER SÉRIEUX SIGNÉ.</b> +${fmt(gain)} — et 20 actions ${TICKERS[sym].name} offertes par un partenaire reconnaissant.`);
+    journal(`Dossier sérieux signé après ${deal.km} km : +${fmt(gain)} et 20 actions <b>${TICKERS[sym].name}</b>.`);
+  } else {
+    const gain = Math.round((5000 + Math.random() * 3000) / 10) * 10;
+    S.cash += gain;
+    applyShock(sym, 0.03);
+    headline(`<b>L'AFFAIRE DU SIÈCLE.</b> ${deal.km} km de semelles usées, +${fmt(gain)} — et votre réseau fait grimper ${TICKERS[sym].name} de +3 %.`);
+    journal(`L'Affaire du siècle est signée : +${fmt(gain)}, et <b>${TICKERS[sym].name}</b> +3 % dans la foulée.`);
+  }
+  updateHUD(); save();
+}
+
+// crédite la distance parcourue (segments GPS plausibles uniquement)
+function walkCredit(d) {
+  const day = gameDay();
+  if (S.walk.day !== day) { S.walk.day = day; S.walk.todayKm = 0; S.walk.credited = 0; }
+  S.walk.total += d / 1000;
+  S.walk.todayKm += d / 1000;
+  // indemnités kilométriques : 50 ₣ / km, plafonnées à 20 km / jour
+  const kms = Math.floor(Math.min(S.walk.todayKm, 20));
+  if (kms > S.walk.credited) {
+    const gain = (kms - S.walk.credited) * 50;
+    S.walk.credited = kms;
+    S.cash += gain;
+    sfx("coin");
+    toast(`🚶 Indemnités kilométriques : +${fmt(gain)}`, "gain");
+  }
+  for (const deal of S.deals.slice()) {
+    deal.done += d / 1000;
+    if (deal.done >= deal.km) hatchDeal(deal);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Mini-jeu de Négociation (la « pokeball » de MAGNAT)
 // ---------------------------------------------------------------------------
 let mgSpawn = null, mgRaf = null, mgPos = 0, mgZone = { c: 0.5, w: 0.2 };
@@ -928,6 +999,7 @@ function tick() {
     S.dayWorth = netWorth();
   }
   ensureQuests();
+  ensureDeals();
   if (d > S.lastChargesDay) {
     let charges = 0;
     for (const id in S.owned) charges += placeValue(byId[id]) * ECO.chargesDay;
@@ -1046,6 +1118,10 @@ function updateCoach() {
     if (next && S.cash >= priceToPay(next)) {
       txt = `🎯 Le monopole des ${CAT_META[t.cat].plural} est à portée — ${next.name}`;
       coachAction = () => openSheet(next);
+    } else if (S.deals.some((dl) => dl.km - dl.done <= 0.5)) {
+      const dl = S.deals.find((x) => x.km - x.done <= 0.5);
+      txt = `🗂️ Plus que ${Math.max(0, Math.round((dl.km - dl.done) * 1000))} m de marche pour boucler « ${DEAL_TIERS[dl.tier].name} »`;
+      coachAction = () => { setTab("empire"); openPanel("empire"); };
     } else if (S.eventNow) {
       txt = "📈 Ça s'agite à la Bourse — allez voir";
       coachAction = () => { setTab("bourse"); openPanel("bourse"); };
@@ -1407,7 +1483,18 @@ function renderPanel() {
         <div class="stile gold"><span class="stile-ic">🪙</span><b>+${fmt(rentTotal)}</b><span class="stile-lbl">Loyers / jour</span></div>
       </div>
       ${pending >= 1 ? `<div class="btn-row" style="margin-bottom:12px">
-        <button class="btn" id="a-collect-all">🪙 Tout encaisser — ${fmt(pending)}</button></div>` : ""}` +
+        <button class="btn" id="a-collect-all">🪙 Tout encaisser — ${fmt(pending)}</button></div>` : ""}
+      <div class="walk-line">🚶 <b>${S.walk.total.toFixed(1)} km</b> parcourus · indemnités du jour : ${Math.min(S.walk.todayKm, 20).toFixed(1)}/20 km</div>
+      ${S.deals.map((dl) => {
+        const T = DEAL_TIERS[dl.tier];
+        const pct = Math.min(100, (dl.done / dl.km) * 100);
+        return `<div class="deal-card">
+          <div class="deal-head">🗂️ <b>${T.name}</b>
+            <span class="deal-km">${Math.min(dl.done, dl.km).toFixed(1)} / ${dl.km} km</span>
+          </div>
+          <div class="deal-bar"><div class="deal-fill" style="width:${pct}%"></div></div>
+        </div>`;
+      }).join("")}` +
       (ids.length
         ? ids.map((id, i) => {
             const p = byId[id], o = S.owned[id];
@@ -1795,6 +1882,11 @@ function radiusGeoJSON() {
 }
 
 function setPlayer(lat, lon, fly = false) {
+  // podomètre GPS : seuls les déplacements plausibles comptent (3–100 m)
+  if (player) {
+    const d = dist(player.lat, player.lon, lat, lon);
+    if (d >= 3 && d <= 100) walkCredit(d);
+  }
   player = { lat, lon };
   if (!playerMarker) {
     const el = document.createElement("div");
