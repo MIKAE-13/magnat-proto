@@ -799,7 +799,7 @@ function openEncounter(id) {
   let d = dist(player.lat, player.lon, s.lat, s.lon);
   if (d > SPAWN_RADIUS_M && simMode) { setPlayer(s.lat, s.lon); d = 0; }
   if (d > SPAWN_RADIUS_M) {
-    toast(`Trop loin — approchez-vous à ${SPAWN_RADIUS_M} m (${Math.round(d)} m)`);
+    notice(`Trop loin — approchez-vous à ${SPAWN_RADIUS_M} m (${Math.round(d)} m)`);
     return;
   }
   startMinigame(s);
@@ -1231,15 +1231,20 @@ function burst(p, n = 9) {
   }
 }
 
-let toastCount = 0;
-function toast(text, cls = "") {
-  if (toastCount > 4) return; // anti-spam en temps accéléré
-  toastCount++;
+// Les toasts d'ambiance sont supprimés : le jeu parle par la carte, le
+// journal et les gros titres. toast() est un no-op conservé pour compat.
+function toast() {}
+
+// notice() : uniquement les messages FONCTIONNELS (trop loin, GPS…)
+let noticeCount = 0;
+function notice(text) {
+  if (noticeCount > 2) return;
+  noticeCount++;
   const el = document.createElement("div");
-  el.className = "toast " + cls;
+  el.className = "toast";
   el.textContent = text;
   $("#toasts").appendChild(el);
-  setTimeout(() => { el.remove(); toastCount--; }, 3200);
+  setTimeout(() => { el.remove(); noticeCount--; }, 2600);
 }
 
 let headlineTimer = null;
@@ -1947,14 +1952,14 @@ function startGPS() {
       if (!gpsChecked) {
         gpsChecked = true;
         if (dist(lat, lon, CENTER[1], CENTER[0]) > 2500) {
-          toast("📍 Vous êtes loin de Mouriès — mode balade activé");
+          notice("📍 Vous êtes loin de Mouriès — mode balade activé");
           enableSim(true);
           return;
         }
       }
       if (!simMode) setPlayer(lat, lon);
     },
-    () => { toast("GPS indisponible — mode balade activé"); enableSim(); },
+    () => { notice("GPS indisponible — mode balade activé"); enableSim(); },
     { enableHighAccuracy: true, maximumAge: 5000 }
   );
 }
@@ -1963,7 +1968,7 @@ function enableSim(silent = false) {
   simMode = true;
   $("#btn-sim").classList.add("on");
   if (!player) setPlayer(CENTER[1], CENTER[0]);
-  if (!silent) toast("🚶 Touchez la carte pour vous déplacer");
+  if (!silent) notice("🚶 Touchez la carte pour vous déplacer");
 }
 
 // ---------------------------------------------------------------------------
@@ -2142,24 +2147,28 @@ function buildPlaceLayers() {
       },
     });
   }
-  if (!map.getSource("spawns")) {
-    map.addSource("spawns", { type: "geojson", data: spawnsGeoJSON() });
-    map.addLayer({
-      id: "spawn-icons", type: "symbol", source: "spawns",
-      layout: {
-        "icon-image": ["get", "icon"],
-        // taille réelle : plus petit qu'une maison, mais repérable et tappable
-        "icon-size": ["*",
-          ["match", ["get", "icon"], "sp-valise", 0.75, 1.0],
-          ["interpolate", ["linear"], ["zoom"], 14, 0.08, 16, 0.17, 18, 0.28]],
-        "icon-anchor": "bottom",
-        "icon-allow-overlap": true,
-        "icon-ignore-placement": true,
-      },
-    });
-  } else {
-    map.getSource("spawns").setData(spawnsGeoJSON());
-  }
+  try {
+    if (!map.getSource("spawns")) {
+      map.addSource("spawns", { type: "geojson", data: spawnsGeoJSON() });
+      map.addLayer({
+        id: "spawn-icons", type: "symbol", source: "spawns",
+        layout: {
+          "icon-image": ["get", "icon"],
+          // taille réelle, plus petit qu'une maison — l'expression de zoom
+          // DOIT être au niveau racine (contrainte MapLibre)
+          "icon-size": ["interpolate", ["linear"], ["zoom"],
+            14, ["match", ["get", "icon"], "sp-valise", 0.06, 0.08],
+            16, ["match", ["get", "icon"], "sp-valise", 0.13, 0.17],
+            18, ["match", ["get", "icon"], "sp-valise", 0.21, 0.28]],
+          "icon-anchor": "bottom",
+          "icon-allow-overlap": true,
+          "icon-ignore-placement": true,
+        },
+      });
+    } else {
+      map.getSource("spawns").setData(spawnsGeoJSON());
+    }
+  } catch (e) { /* la couche des rencontres ne doit jamais bloquer le reste */ }
   if (!placesWired) {
     placesWired = true;
     map.on("click", "spawn-icons", (e) => {
