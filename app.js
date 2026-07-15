@@ -104,10 +104,19 @@ function freshStocks() {
   return st;
 }
 
+// l'horloge du jeu est calée sur l'heure réelle (le jeu « commence » à 9h00,
+// donc gameMs est décalé pour que l'heure du jeu == l'heure de la montre)
+function initialGameMs() {
+  const d = new Date();
+  return (((d.getHours() - 9 + 24) % 24) * 60 + d.getMinutes()) * 60_000;
+}
+
 function freshState() {
   return {
     cash: ECO.start,
-    gameMs: 0,
+    gameMs: initialGameMs(),
+    clockAnchored: true,
+    lastSeen: Date.now(),
     startDow: new Date().getDay(),
     owned: {},
     npc: [],           // hérité (v0.6) — migré vers npcOwners
@@ -136,6 +145,7 @@ function freshState() {
   };
 }
 
+let offlineGapMs = 0;
 let S = load();
 function load() {
   try {
@@ -147,6 +157,21 @@ function load() {
       // migration v0.6 → v0.8 : l'ancien tableau npc devient npcOwners
       if (Array.isArray(st.npc) && st.npc.length && !Object.keys(st.npcOwners).length) {
         st.npc.forEach((id) => (st.npcOwners[id] = "betonneur"));
+      }
+      // LE correctif du jeu idle : le temps passe aussi quand l'app est
+      // fermée (à vitesse réelle ×1, plafonné à 14 jours)
+      const nowMs = Date.now();
+      if (parsed.lastSeen) {
+        offlineGapMs = Math.max(0, Math.min(nowMs - parsed.lastSeen, 14 * DAY));
+        st.gameMs += offlineGapMs;
+      }
+      // migration : caler l'horloge du jeu sur l'heure réelle
+      if (!parsed.clockAnchored) {
+        const d = new Date();
+        const target = ((d.getHours() - 9 + 24) % 24) * 60 + d.getMinutes();
+        const cur = Math.floor(st.gameMs / 60_000) % 1440;
+        st.gameMs += ((target - cur + 1440) % 1440) * 60_000;
+        st.clockAnchored = true;
       }
       return st;
     }
@@ -553,8 +578,12 @@ function npcTick() {
 // ---------------------------------------------------------------------------
 function tick() {
   const now = Date.now();
-  S.gameMs += (now - lastReal) * speed;
+  const dt = now - lastReal;
   lastReal = now;
+  // au-delà de 30 s sans tick (onglet endormi, app en fond), le temps
+  // écoulé compte à vitesse réelle — jamais multiplié par l'accélérateur
+  S.gameMs += dt > 30_000 ? dt : dt * speed;
+  S.lastSeen = now;
 
   const d = gameDay();
   if (d > S.dayWorthDay) {
@@ -1190,12 +1219,19 @@ let map, baseStyle = null, night = null, themeForced = null;
 
 function wantNight() {
   if (themeForced !== null) return themeForced;
-  const h = new Date().getHours() + new Date().getMinutes() / 60;
-  return h >= 18.5 || h < 9;
+  // le thème suit l'horloge du JEU (identique à l'heure réelle à vitesse
+  // normale ; en accéléré, les nuits simulées s'affichent vraiment)
+  const hod = (9 + S.gameMs / HOUR) % 24;
+  return hod >= 18.5 || hod < 9;
 }
 
+let lastThemeSwitch = 0;
 function applyThemeByClock() {
-  if (baseStyle && wantNight() !== night) applyTheme(wantNight());
+  if (!baseStyle || wantNight() === night) return;
+  const now = Date.now();
+  if (now - lastThemeSwitch < 20_000) return; // pas plus d'une bascule / 20 s
+  lastThemeSwitch = now;
+  applyTheme(wantNight());
 }
 
 function applyTheme(toNight) {
@@ -1496,6 +1532,14 @@ fetch("https://tiles.openfreemap.org/styles/positron")
       addGameLayers();
       updateHUD();
       if (S.onboarded) { $("#onboard").style.display = "none"; startGPS(); }
+      // bilan du retour : ce qui s'est accumulé pendant l'absence
+      if (offlineGapMs > 2 * HOUR) {
+        const pending = Object.keys(S.owned)
+          .reduce((a, id) => a + accrued(byId[id]), 0);
+        if (pending >= 1) {
+          setTimeout(() => toast(`🌙 Pendant votre absence : ${fmt(pending)} de loyers vous attendent`, "gain"), 1200);
+        }
+      }
     });
     map.on("click", (e) => {
       if (simMode) setPlayer(e.lngLat.lat, e.lngLat.lng);
