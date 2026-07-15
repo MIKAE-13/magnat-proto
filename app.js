@@ -363,25 +363,51 @@ function journal(text) {
 }
 
 // ---------------------------------------------------------------------------
-// XP & niveaux
+// XP & niveaux : 50 niveaux, courbe et récompenses EXPONENTIELLES
 // ---------------------------------------------------------------------------
-const xpNeeded = (lv) => 150 * lv;
+const LEVEL_CAP = 50;
+const xpNeeded = (lv) => Math.max(100, Math.round((80 * Math.pow(1.14, lv)) / 10) * 10);
+const levelCash = (lv) => Math.round((300 * Math.pow(1.12, lv)) / 10) * 10;
+
+// paliers de déblocage : chaque tranche de 5 niveaux améliore VRAIMENT le jeu
+const PERKS = {
+  5:  "3ᵉ dossier d'Affaires simultané",
+  10: "Rayon d'action +25 m",
+  15: "Indemnités kilométriques : plafond 30 km/jour",
+  20: "Les rues attirent +2 rencontres",
+  25: "La Tournée du proprio dure 36 h",
+  30: "Repérage : remise maximale 20 %",
+  35: "Rayon d'action +50 m",
+  40: "Dividendes +10 %",
+  45: "4 défis par jour",
+  50: "Titre « Légende de Mouriès »",
+};
+
+// effets des paliers
+const playerRadius = () => ECO.radiusM + (S.level >= 10 ? 25 : 0) + (S.level >= 35 ? 50 : 0);
+const dealSlots = () => (S.level >= 5 ? 3 : 2);
+const kmCap = () => (S.level >= 15 ? 30 : 20);
+const inspectHours = () => (S.level >= 25 ? 36 : ECO.inspectDurH);
+const maxDiscount = () => (S.level >= 30 ? 0.20 : 0.15);
 
 function addXp(n) {
+  if (S.level >= LEVEL_CAP) return false;
   S.xp += n;
   let up = false;
-  while (S.xp >= xpNeeded(S.level)) {
+  while (S.level < LEVEL_CAP && S.xp >= xpNeeded(S.level)) {
     S.xp -= xpNeeded(S.level);
     S.level += 1;
     up = true;
+    const cash = levelCash(S.level);
+    S.cash += cash;
+    S.items.cafe += 1;
+    S.items.croissant += 1;
+    if (S.level % 5 === 0) { S.items.cafe += 2; S.items.croissant += 2; }
+    const perk = PERKS[S.level];
+    headline(`<b>NIVEAU ${S.level}${S.level === LEVEL_CAP ? " — LÉGENDE DE MOURIÈS" : ""}.</b> +${fmt(cash)} et provisions de négociation${perk ? ` — débloqué : ${perk}` : ""}.`);
+    journal(`<b>Niveau ${S.level}</b> : +${fmt(cash)}, +1 ☕ +1 🥐${S.level % 5 === 0 ? " (+2 de chaque en bonus de palier)" : ""}${perk ? ` — <b>${perk}</b>` : ""}.`);
   }
-  if (up) {
-    const bonus = 250 * S.level;
-    S.cash += bonus;
-    sfx("mono");
-    headline(`<b>NIVEAU ${S.level}.</b> Votre réputation grandit — prime de notoriété : +${fmt(bonus)}.`);
-    journal(`Vous atteignez le <b>niveau ${S.level}</b>. Prime de notoriété : +${fmt(bonus)}.`);
-  }
+  if (up) sfx("mono");
   updateHUD(); save();
   return up;
 }
@@ -394,7 +420,9 @@ function ensureQuests() {
   if (S.quests.day === d) return;
   S.quests = {
     day: d,
-    items: ["collect", "tournee", d % 2 ? "bourse" : "invest"].map((id) => ({
+    items: ["collect", "tournee", d % 2 ? "bourse" : "invest"]
+      .concat(S.level >= 45 ? [d % 2 ? "invest" : "bourse"] : [])
+      .map((id) => ({
       id, progress: 0, done: false,
     })),
   };
@@ -444,7 +472,7 @@ function checkTitle() {
 // ---------------------------------------------------------------------------
 const priceToPay = (p) =>
   (npcOf(p.id) ? p.price * ECO.flip : p.price) * (1 - (S.discounts[p.id] || 0));
-const inRange = (p) => player && dist(player.lat, player.lon, p.lat, p.lon) <= ECO.radiusM;
+const inRange = (p) => player && dist(player.lat, player.lon, p.lat, p.lon) <= playerRadius();
 
 function buy(p) {
   const cost = priceToPay(p);
@@ -453,7 +481,7 @@ function buy(p) {
   S.cash -= cost;
   delete S.npcOwners[p.id];
   delete S.discounts[p.id];
-  S.owned[p.id] = { level: 0, lastCollect: S.gameMs, inspectedUntil: S.gameMs + ECO.inspectDurH * HOUR };
+  S.owned[p.id] = { level: 0, lastCollect: S.gameMs, inspectedUntil: S.gameMs + inspectHours() * HOUR };
   questBump("invest");
   addXp(40);
   if (fromNpc) {
@@ -504,7 +532,7 @@ function collectAll() {
 }
 
 function inspect(p) {
-  S.owned[p.id].inspectedUntil = S.gameMs + ECO.inspectDurH * HOUR;
+  S.owned[p.id].inspectedUntil = S.gameMs + inspectHours() * HOUR;
   toast(`👔 Le proprio est passé — loyer ×${isWeekend() ? 3 : 2} pendant 24 h`);
   questBump("tournee");
   addXp(15);
@@ -530,7 +558,7 @@ function scout(p) {
   S.scouted[p.id] = gameDay();
   const gain = Math.round((30 + Math.random() * 70) / 10) * 10;
   S.cash += gain;
-  S.discounts[p.id] = Math.min(0.15, (S.discounts[p.id] || 0) + 0.05);
+  S.discounts[p.id] = Math.min(maxDiscount(), (S.discounts[p.id] || 0) + 0.05);
   sfx("coin");
   toast(`🔍 Repérage : +${fmt(gain)} · dossier −${Math.round(S.discounts[p.id] * 100)} % sur ${p.name}`, "gain");
   updateHUD(); openSheet(p, true); save();
@@ -639,7 +667,7 @@ function stockTick() {
         const st = S.stocks[sym];
         st.hist.push(Math.round(st.price * 100) / 100);
         if (st.hist.length > 120) st.hist.shift();
-        divTotal += st.shares * st.price * TICKERS[sym].div;
+        divTotal += st.shares * st.price * TICKERS[sym].div * (S.level >= 40 ? 1.1 : 1);
         if (st.halted > 0) st.halted -= 1;
       }
     }
@@ -806,7 +834,7 @@ function spawnAlgorithm(now) {
   // densité dynamique : ~3-4 rencontres possibles PAR commerce alentour —
   // une rue commerçante peut grouiller (jusqu'à 15), la garrigue reste calme
   const nearby = PLACES.filter((p) => dist(player.lat, player.lon, p.lat, p.lon) < 130).length;
-  const cap = Math.min(15, 3 + nearby);         // 3 (isolé) → 15 (plein cours)
+  const cap = Math.min(15, 3 + nearby + (S.level >= 20 ? 2 : 0)); // 3 → 15, +2 dès le nv 20
   if (S.spawns.length >= cap) return;
   const moved = lastRollPos ? dist(player.lat, player.lon, lastRollPos.lat, lastRollPos.lon) : 0;
   lastRollPos = { lat: player.lat, lon: player.lon };
@@ -901,7 +929,7 @@ function resolveEncounter(s, success) {
       lines.push({ ic: "🌟", txt: `Avis 5 étoiles : loyer de ${p.name} ×3 pendant 6 h`, cls: "up" });
       journal(`Le Client Mystère encense <b>${p.name}</b>. La file déborde.`);
     } else if (p) {
-      S.discounts[p.id] = Math.min(0.15, (S.discounts[p.id] || 0) + 0.10);
+      S.discounts[p.id] = Math.min(maxDiscount(), (S.discounts[p.id] || 0) + 0.10);
       sfx("quest");
       lines.push({ ic: "🔖", txt: `Il vous glisse le dossier : −${Math.round(S.discounts[p.id] * 100)} % sur ${p.name}`, cls: "up" });
     } else {
@@ -951,7 +979,7 @@ const DEAL_TIERS = [
 
 function ensureDeals() {
   const d = gameDay();
-  if (S.dealDay === d || S.deals.length >= 2) return;
+  if (S.dealDay === d || S.deals.length >= dealSlots()) return;
   S.dealDay = d;
   const r = Math.random();
   const tier = r < 0.05 ? 2 : r < 0.30 ? 1 : 0;
@@ -995,7 +1023,7 @@ function walkCredit(d) {
   S.walk.total += d / 1000;
   S.walk.todayKm += d / 1000;
   // indemnités kilométriques : 50 ₣ / km, plafonnées à 20 km / jour
-  const kms = Math.floor(Math.min(S.walk.todayKm, 20));
+  const kms = Math.floor(Math.min(S.walk.todayKm, kmCap()));
   if (kms > S.walk.credited) {
     const gain = (kms - S.walk.credited) * 50;
     S.walk.credited = kms;
@@ -1135,7 +1163,7 @@ function mgFinish(success) {
   v.className = success ? "up" : "down";
   $("#mg-lines").innerHTML = lines.map((l) =>
     `<div class="mg-line ${l.cls}"><span>${l.ic}</span>${l.txt}</div>`).join("") +
-    (leveled ? `<div class="mg-line up"><span>🎉</span>NIVEAU ${S.level} ! Prime de notoriété : +${fmt(250 * S.level)}</div>` : "");
+    (leveled ? `<div class="mg-line up"><span>🎉</span>NIVEAU ${S.level} ! Récompenses : +${fmt(levelCash(S.level))} et provisions</div>` : "");
   $("#mg-xp-gain").textContent = `+${xpGain} XP`;
   $("#mg-xp-level").textContent = `Nv ${S.level}`;
   const fill = $("#mg-xp-fill");
@@ -1465,7 +1493,7 @@ function openSheet(p, silent = false) {
       </div>
       <div class="btn-row">
         ${near ? `<button class="btn ghost" id="a-inspect" ${inspected ? "disabled" : ""}>
-          ${inspected ? "👔 Tournée déjà faite — revenez demain" : `👔 Tournée du proprio (loyer ×${isWeekend() ? 3 : 2}, 24 h)`}</button>`
+          ${inspected ? "👔 Tournée déjà faite — revenez demain" : `👔 Tournée du proprio (loyer ×${isWeekend() ? 3 : 2}, ${inspectHours()} h)`}</button>`
         : `<button class="btn ghost" id="a-goto">🚶 S'y rendre</button>`}
         ${nextCost != null ? `
         <button class="btn gold" id="a-upgrade" ${S.cash >= nextCost ? "" : "disabled"}>
@@ -1687,8 +1715,9 @@ function renderPanel() {
       <div class="btn-row" style="margin-bottom:12px">
         <button class="btn gold" id="a-perso">🕴️ Personnaliser mon personnage</button>
       </div>
-      <div class="walk-line">⭐ <b>Niveau ${S.level}</b> · ${Math.round(S.xp)}/${xpNeeded(S.level)} XP · ☕ ×${S.items.cafe || 0} · 🥐 ×${S.items.croissant || 0}</div>
-      <div class="walk-line">🚶 <b>${S.walk.total.toFixed(1)} km</b> parcourus · indemnités du jour : ${Math.min(S.walk.todayKm, 20).toFixed(1)}/20 km</div>
+      <div class="walk-line">⭐ <b>Niveau ${S.level}/${LEVEL_CAP}</b> · ${Math.round(S.xp)}/${xpNeeded(S.level)} XP · ☕ ×${S.items.cafe || 0} · 🥐 ×${S.items.croissant || 0}</div>
+      ${S.level < LEVEL_CAP ? `<div class="walk-line">🎁 Niveau ${S.level + 1} : +${fmt(levelCash(S.level + 1))} et provisions${PERKS[S.level + 1] ? ` · <b>${PERKS[S.level + 1]}</b>` : ""}</div>` : `<div class="walk-line">👑 <b>Légende de Mouriès</b> — niveau maximum atteint.</div>`}
+      <div class="walk-line">🚶 <b>${S.walk.total.toFixed(1)} km</b> parcourus · indemnités du jour : ${Math.min(S.walk.todayKm, kmCap()).toFixed(1)}/${kmCap()} km</div>
       ${S.deals.map((dl) => {
         const T = DEAL_TIERS[dl.tier];
         const pct = Math.min(100, (dl.done / dl.km) * 100);
@@ -2157,8 +2186,8 @@ function radiusGeoJSON() {
   const pts = [], n = 48;
   for (let i = 0; i <= n; i++) {
     const a = (i / n) * 2 * Math.PI;
-    const dLat = (ECO.radiusM / 111320) * Math.sin(a);
-    const dLon = (ECO.radiusM / (111320 * Math.cos((player.lat * Math.PI) / 180))) * Math.cos(a);
+    const dLat = (playerRadius() / 111320) * Math.sin(a);
+    const dLon = (playerRadius() / (111320 * Math.cos((player.lat * Math.PI) / 180))) * Math.cos(a);
     pts.push([player.lon + dLon, player.lat + dLat]);
   }
   return { type: "Feature", geometry: { type: "Polygon", coordinates: [pts] } };
