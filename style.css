@@ -895,3 +895,105 @@ body.night .tab.active { box-shadow: inset 0 1.5px 0 rgba(255, 255, 255, 0.08); 
   text-decoration: underline;
   padding: 0;
 }
+
+/* ============ Onglets : icônes 3D de jeu ============ */
+.tab-ic {
+  height: 32px; width: 32px;
+  object-fit: contain;
+  filter: grayscale(0.55) drop-shadow(0 2px 3px rgba(0,0,0,0.25));
+  transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1), filter 0.18s;
+}
+.tab.active .tab-ic {
+  filter: grayscale(0) drop-shadow(0 0 8px rgba(233, 192, 92, 0.6)) drop-shadow(0 2px 3px rgba(0,0,0,0.25));
+  transform: scale(1.3) translateY(-3px);
+}
+.tab span { display: none; }
+
+/* ============ EMPIRE : tableau de bord ============ */
+.stat-tiles {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.stile {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 12px 8px 10px;
+  text-align: center;
+  box-shadow: var(--shadow), inset 0 1.5px 0 rgba(255,255,255,0.5);
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+}
+body.night .stile { box-shadow: var(--shadow), inset 0 1.5px 0 rgba(255,255,255,0.06); }
+.stile-ic { font-size: 26px; filter: drop-shadow(0 2px 3px rgba(0,0,0,0.2)); }
+.stile b { font-size: 15.5px; font-variant-numeric: tabular-nums; }
+.stile-lbl { font-size: 10.5px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-soft); }
+.stile.gold { border-color: var(--gold); }
+.stile.gold b { color: var(--gold); }
+
+.prop-card {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 10px 14px 10px 10px;
+  margin-bottom: 9px;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+  animation: card-in 0.35s ease-out both;
+  transition: transform 0.1s;
+}
+.prop-card:active { transform: scale(0.98); }
+.prop-img {
+  height: 52px; width: 58px;
+  object-fit: contain;
+  filter: drop-shadow(0 3px 4px rgba(0,0,0,0.25));
+}
+.prop-info { flex: 1; min-width: 0; }
+.prop-info b { font-size: 14.5px; display: block; }
+.prop-info .sub { color: var(--ink-soft); font-size: 12px; }
+.prop-card .val { font-weight: 800; color: var(--emerald); font-variant-numeric: tabular-nums; text-align: right; }
+.prop-card .val-day { font-size: 10px; color: var(--ink-soft); display: block; font-weight: 700; }
+
+/* ============ JOURNAL : la une de presse ============ */
+.jr-masthead {
+  background: var(--salmon);
+  border-radius: 16px;
+  padding: 18px 16px 14px;
+  text-align: center;
+  margin-bottom: 14px;
+  border-bottom: 3px solid rgba(0,0,0,0.15);
+  box-shadow: var(--shadow);
+}
+.jr-title {
+  font-family: "Didot", "Bodoni 72", Georgia, serif;
+  font-size: 30px; font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--ink);
+}
+body.night .jr-title { color: #EDE3D2; }
+.jr-tag { font-style: italic; font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
+.jr-card {
+  display: flex; gap: 12px; align-items: flex-start;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 12px 14px;
+  margin-bottom: 9px;
+  box-shadow: var(--shadow);
+  animation: card-in 0.35s ease-out both;
+}
+.jr-medal {
+  flex: 0 0 40px;
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  background: var(--cream);
+  border: 2px solid var(--gold);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 19px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.4), 0 2px 5px rgba(0,0,0,0.12);
+}
+.jr-body { flex: 1; min-width: 0; }
+.jr-day { font-size: 10px; font-weight: 800; letter-spacing: 0.14em; color: var(--gold); margin-bottom: 2px; }
+.jr-text { font-size: 14px; line-height: 1.42; }

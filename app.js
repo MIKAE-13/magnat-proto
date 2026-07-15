@@ -702,10 +702,11 @@ let lastRollPos = null;
 let lastSpawnAt = Date.now() - 5.5 * 60_000; // première rencontre sous ~1 min
 
 function spawnGroup(n) {
-  const nearPois = PLACES.filter((p) => dist(player.lat, player.lon, p.lat, p.lon) < 350);
-  // une grappe s'ancre sur UN lieu (le « pokestop ») ; un solo peut être libre
+  // TOUT se passe à côté du joueur : l'apparition accompagne la marche.
+  // Ancrage seulement sur les commerces qu'on est en train de LONGER (< 150 m).
+  const nearPois = PLACES.filter((p) => dist(player.lat, player.lon, p.lat, p.lon) < 150);
   let anchor = null;
-  if (nearPois.length && (n > 1 || Math.random() < 0.6)) {
+  if (nearPois.length && (n > 1 || Math.random() < 0.5)) {
     anchor = nearPois[Math.floor(Math.random() * nearPois.length)];
   }
   for (let i = 0; i < n; i++) {
@@ -715,10 +716,10 @@ function spawnGroup(n) {
     if (anchor) {
       baseLat = anchor.lat; baseLon = anchor.lon;
       placeId = anchor.id;
-      r = 15 + Math.random() * 60;
+      r = 10 + Math.random() * 40;
     } else {
       baseLat = player.lat; baseLon = player.lon;
-      r = 70 + Math.random() * 190;
+      r = 35 + Math.random() * 95;   // toujours à portée de vue du joueur
     }
     S.spawns.push({
       id: "s" + (++S.spawnSeq),
@@ -738,15 +739,16 @@ function spawnAlgorithm(now) {
   const before = S.spawns.length;
   S.spawns = S.spawns.filter((s) => (s.exp || 0) > now);
   if (S.spawns.length !== before) updateSpawnSource();
-  if (!player || now - lastSpawnRoll < 30_000) return;
+  if (!player || now - lastSpawnRoll < 20_000) return;
   lastSpawnRoll = now;
   if (S.spawns.length >= 4) return;
   const moved = lastRollPos ? dist(player.lat, player.lon, lastRollPos.lat, lastRollPos.lon) : 0;
   lastRollPos = { lat: player.lat, lon: player.lon };
-  let p = 0.20 + (moved > 80 ? 0.40 : 0);       // marcher attire les rencontres
+  // c'est la MARCHE qui fait apparaître : presque rien à l'arrêt,
+  // beaucoup en mouvement — le pop progresse avec le joueur
+  let p = 0.08 + (moved > 50 ? 0.55 : 0);
   if (now - lastSpawnAt > 6 * 60_000) p = 1;    // pity : jamais bredouille > 6 min
   if (Math.random() > p) return;
-  // ~1 vague sur 3 est une GRAPPE de 2-3, façon pokestop
   const cluster = Math.random() < 0.33;
   const room = 4 - S.spawns.length;
   spawnGroup(Math.min(room, cluster ? 2 + (Math.random() < 0.5 ? 1 : 0) : 1));
@@ -1345,10 +1347,31 @@ function renderPanel() {
   }
 
   else if (panelTab === "journal") {
-    c.innerHTML = `<h2>La Plus-Value</h2>
-      <div class="panel-sub">Le journal qui possède ses lecteurs — Mouriès, jour ${gameDay() + 1}</div>` +
+    const iconFor = (txt) => {
+      if (/MONOPOLE|monopole/.test(txt)) return "👑";
+      if (/BOURSE|RUMEUR|COTE|Cotation|Tuyau|tuyau/.test(txt)) return "📈";
+      if (/Bétonneur|Vieilargent|StartupBro|Baronne|rival/.test(txt)) return "🏗️";
+      if (/Informateur/.test(txt)) return "🕵️";
+      if (/Impôts|amende/.test(txt)) return "👮";
+      if (/rang de|PROMOTION/.test(txt)) return "🎩";
+      if (/Client Mystère|étrille|encense/.test(txt)) return "🧐";
+      if (/Acte notarié|arraché/.test(txt)) return "📜";
+      return "🗞️";
+    };
+    c.innerHTML = `
+      <div class="jr-masthead">
+        <div class="jr-title">LA PLUS-VALUE</div>
+        <div class="jr-tag">Le journal qui possède ses lecteurs — Mouriès, jour ${gameDay() + 1}</div>
+      </div>` +
       (S.journal.length
-        ? S.journal.map((n) => `<div class="news-item"><div class="date">JOUR ${n.day + 1}</div>${n.text}</div>`).join("")
+        ? S.journal.map((n, i) => `
+          <div class="jr-card" style="animation-delay:${Math.min(i, 8) * 40}ms">
+            <div class="jr-medal">${iconFor(n.text)}</div>
+            <div class="jr-body">
+              <div class="jr-day">JOUR ${n.day + 1}</div>
+              <div class="jr-text">${n.text}</div>
+            </div>
+          </div>`).join("")
         : `<div class="locked"><div class="big">🗞️</div><p>Rien à signaler. Achetez quelque chose, que le village ait de quoi jaser.</p></div>`);
   }
 
@@ -1376,27 +1399,30 @@ function renderPanel() {
           </div>`;
         }).join("")}
       </div>
-      <div class="sheet-row" style="margin-bottom:10px">
-        <div class="stat">Liquidités <b>${fmt(S.cash)}</b></div>
-        <div class="stat">Immobilier <b>${fmt(propTotal)}</b></div>
-        <div class="stat">Actions <b>${fmt(stockValue())}</b></div>
-        <div class="stat">Loyers <b>${fmt(rentTotal)}</b>/j</div>
+      <div class="stat-tiles">
+        <div class="stile"><span class="stile-ic">💵</span><b>${fmt(S.cash)}</b><span class="stile-lbl">Liquidités</span></div>
+        <div class="stile"><span class="stile-ic">🏠</span><b>${fmt(propTotal)}</b><span class="stile-lbl">Immobilier</span></div>
+        <div class="stile"><span class="stile-ic">📈</span><b>${fmt(stockValue())}</b><span class="stile-lbl">Actions</span></div>
+        <div class="stile gold"><span class="stile-ic">🪙</span><b>+${fmt(rentTotal)}</b><span class="stile-lbl">Loyers / jour</span></div>
       </div>
-      ${pending >= 1 ? `<div class="btn-row" style="margin-bottom:6px">
-        <button class="btn" id="a-collect-all">🪙 Tout collecter — ${fmt(pending)}</button></div>` : ""}` +
+      ${pending >= 1 ? `<div class="btn-row" style="margin-bottom:12px">
+        <button class="btn" id="a-collect-all">🪙 Tout encaisser — ${fmt(pending)}</button></div>` : ""}` +
       (ids.length
-        ? ids.map((id) => {
+        ? ids.map((id, i) => {
             const p = byId[id], o = S.owned[id];
-            return `<div class="prop-row" data-id="${id}">
-              <div>${CAT_META[p.cat].icon} <b>${p.name}</b>
-                <div class="sub">${o.level ? ECO.upNames[o.level - 1] + " · " : ""}${hasMonopoly(p.cat) ? "👑 monopole · " : ""}${fmt(placeValue(p))}</div>
+            return `<div class="prop-card" data-id="${id}" style="animation-delay:${Math.min(i, 8) * 40}ms">
+              <img class="prop-img" src="assets/${sprName(p)}.png" alt="">
+              <div class="prop-info">
+                <b>${p.name}</b>
+                <div class="sub">${o.level ? "🏗️ " + ECO.upNames[o.level - 1] + " · " : ""}${hasMonopoly(p.cat) ? "👑 Monopole · " : ""}${fmt(placeValue(p))}</div>
               </div>
-              <div class="val">+${fmt(rentPerDay(p))}/j</div></div>`;
+              <div class="val">+${fmt(rentPerDay(p))}<span class="val-day">/jour</span></div>
+            </div>`;
           }).join("")
         : `<div class="locked"><div class="big">🏚️</div><p>Vous ne possédez rien. C'est réparable.</p></div>`);
     $("#a-help")?.addEventListener("click", () => openPanel("aide"));
     $("#a-collect-all")?.addEventListener("click", () => { collectAll(); renderPanel(); });
-    c.querySelectorAll(".prop-row").forEach((row) =>
+    c.querySelectorAll(".prop-card").forEach((row) =>
       row.addEventListener("click", () => {
         closePanel();
         openSheet(byId[row.dataset.id]);
