@@ -1060,7 +1060,10 @@ function npcTick() {
 // Apparitions sur la carte (façon Pokémon GO) : pièces et coffres mystère
 // ---------------------------------------------------------------------------
 const SPAWN_TARGET = 3;
-const SPAWN_RADIUS_M = 60;
+// règle d'or : TOUT ce qui pop est touchable — le rayon d'interaction
+// couvre la distance maximale d'apparition (~180 m, Client Mystère compris).
+// C'est la marche qui fait apparaître, pas la marche qui autorise le tap.
+const SPAWN_RADIUS_M = 180;
 
 // ---------------------------------------------------------------------------
 // Les Parchemins Notariaux : réunir les fragments d'un acte = posséder le lieu
