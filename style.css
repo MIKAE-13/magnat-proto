@@ -1577,3 +1577,9 @@ body.night .tab.active { box-shadow: none; }
 .lb-name { flex: 1; font-weight: 700; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lb-lvl { font-size: 12px; font-weight: 700; color: var(--ink-soft); }
 .lb-worth { font-weight: 800; color: var(--emerald); font-variant-numeric: tabular-nums; }
+
+/* ---------- Onglets : icônes FLAT (SVG monochromes) ---------- */
+.tab { color: var(--ink-soft); }
+.tab.active { color: var(--emerald); }
+svg.tab-ic { height: 24px; width: 24px; filter: none; opacity: 0.75; }
+.tab.active svg.tab-ic { filter: none; opacity: 1; transform: scale(1.12) translateY(-1px); }

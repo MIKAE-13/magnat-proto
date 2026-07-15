@@ -867,6 +867,9 @@ function natWalk() {
           + (ev?.shocks[sym] || 0) + push;
         const r = P[sym] / dayOpen[sym];
         if (r > 1.15 || r < 0.85) { P[sym] = dayOpen[sym] * (r > 1 ? 1.15 : 0.85); halted[sym] = 1; }
+        // un cours ne passe jamais sous 4 % de sa base : il agonise en
+        // penny stock, il ne meurt pas (la radiation de la cote viendra)
+        if (P[sym] < TICKERS[sym].base * 0.04) P[sym] = TICKERS[sym].base * 0.04;
         anchorsToday[sym].push(Math.round(P[sym] * 100) / 100);
       }
       if (ev && --ev.hoursLeft <= 0) ev = null;
@@ -937,7 +940,9 @@ function natApply() {
   S.natDivHour = w.hNow;
   if (divTotal >= 1) {
     S.cash += divTotal;
-    toast(`💰 Dividendes de clôture : +${fmt(divTotal)}`, "gain");
+    sfx("coin");
+    notice(`💰 Dividendes de clôture : +${fmt(divTotal)}`);
+    journal(`CLÔTURE — vos dividendes tombent : <b>+${fmt(divTotal)}</b>. L'argent travaille, vous non.`);
     updateHUD();
   }
   if (!S.natV1) {
@@ -1954,6 +1959,8 @@ $("#sheet-close").addEventListener("click", () => {
   $("#sheet").hidden = true;
   sheetPlace = null;
   updateCoach();
+  // la fiche a pu emmener la caméra ailleurs : retour au personnage
+  if (player) map.easeTo({ center: [player.lon, player.lat], duration: 600 });
 });
 
 // la jauge de monopole est tappable : vole vers la prochaine pièce à acheter
@@ -3040,12 +3047,12 @@ fetch("https://tiles.openfreemap.org/styles/positron")
         }
       }
     });
+    // caméra à la Pokémon GO : rivée au personnage — on zoome, on pivote,
+    // mais on ne se promène pas à la main sur la carte
+    map.dragPan.disable();
+    map.keyboard.disable();
     map.on("click", (e) => {
       if (simMode) setPlayer(e.lngLat.lat, e.lngLat.lng);
-    });
-    map.on("dragstart", () => {
-      follow = false;
-      $("#btn-recenter").hidden = false;
     });
   })
   .catch(() => {
