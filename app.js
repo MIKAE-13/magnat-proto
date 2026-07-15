@@ -226,6 +226,7 @@ function freshState() {
     coteV2: true,
     natDivHour: -1,  // dernière clôture nationale déjà payée en dividendes
     natEvSeen: -1,   // dernier événement national déjà annoncé
+    natNoctSeen: -1, // dernière nocturne déjà annoncée
     natV1: false,
   };
 }
@@ -820,10 +821,10 @@ function natWalk() {
     const k = g.sym + "|" + g.h;
     sig[k] = (sig[k] || 0) + g.pct;
   }
-  const P = {}, dayOpen = {}, hist = {}, anchorsToday = {}, halted = {};
+  const P = {}, dayOpen = {}, hist = {}, anchorsToday = {}, halted = {}, pending = {};
   for (const sym in TICKERS) {
     P[sym] = TICKERS[sym].base; dayOpen[sym] = TICKERS[sym].base;
-    hist[sym] = []; anchorsToday[sym] = []; halted[sym] = 0;
+    hist[sym] = []; anchorsToday[sym] = []; halted[sym] = 0; pending[sym] = 0;
   }
   const idxAnchors = [];
   const closes = [];
@@ -835,8 +836,12 @@ function natWalk() {
     const we = dow === 0 || dow === 6;
     const dayKey = Math.floor((BOURSE_EPOCH + h * HOUR) / DAY);
 
+    // les signaux des joueurs s'ACCUMULENT à toute heure — ceux du soir et
+    // de la nuit pèsent sur l'ouverture (« le gap d'ouverture intègre la nuit »)
+    for (const sym in TICKERS) pending[sym] += sig[sym + "|" + h] || 0;
+
     if (!we && hod === 9) {
-      for (const sym in TICKERS) { dayOpen[sym] = P[sym]; anchorsToday[sym] = [P[sym]]; }
+      for (const sym in TICKERS) { dayOpen[sym] = P[sym]; anchorsToday[sym] = [P[sym]]; halted[sym] = 0; }
       idxDayOpen = natIndex(P);
     }
     // grands événements lundi ET jeudi à 10h — choisis par la graine du jour
@@ -858,11 +863,15 @@ function natWalk() {
       };
       evStart = h;
     }
-    if (!we && hod >= 9 && hod < 18) {
+    // séance 9h–18h + certains soirs une NOCTURNE 21h–23h (déterministe,
+    // ~1 soir sur 7 en semaine : le jeu du canapé a son rendez-vous)
+    const noct = !we && natRnd("noct|" + dayKey) < 0.15 && hod >= 21 && hod < 23;
+    if ((!we && hod >= 9 && hod < 18) || noct) {
       for (const sym in TICKERS) {
         const t = TICKERS[sym];
         if (halted[sym] > 0) continue;
-        const push = Math.max(-0.03, Math.min(0.03, sig[sym + "|" + h] || 0));
+        const push = Math.max(-0.03, Math.min(0.03, pending[sym]));
+        pending[sym] = 0;
         P[sym] *= 1 + t.drift / 9 + natGaussK("t|" + sym + "|" + h) * (t.vol / 2.2)
           + (ev?.shocks[sym] || 0) + push;
         const r = P[sym] / dayOpen[sym];
@@ -880,7 +889,6 @@ function natWalk() {
       for (const sym in TICKERS) {
         hist[sym].push(Math.round(P[sym] * 100) / 100);
         if (hist[sym].length > 120) hist[sym].shift();
-        if (halted[sym] > 0) halted[sym] -= 1;
       }
     }
   }
@@ -926,6 +934,21 @@ function natApply() {
   } else {
     S.eventNow = null;
   }
+  // soir de NOCTURNE : annoncé dès 18h, bannière jusqu'à la clôture de 23h
+  const dNow = new Date(), hodNow = dNow.getHours();
+  const weNow = dNow.getDay() === 0 || dNow.getDay() === 6;
+  if (!weNow && nocturneDay(Math.floor(Date.now() / DAY)) && hodNow >= 18 && hodNow < 23) {
+    if (!S.eventNow) S.eventNow = {
+      head: "🌙 SÉANCE NOCTURNE — le marché rouvre de 21h à 23h. Les insomniaques spéculent.",
+      shocks: {}, hoursLeft: 23 - hodNow,
+    };
+    const dayKeyNow = Math.floor(Date.now() / DAY);
+    if (S.natNoctSeen !== dayKeyNow) {
+      S.natNoctSeen = dayKeyNow;
+      headline("<b>SÉANCE NOCTURNE CE SOIR.</b> Le marché rouvre de 21h à 23h — la France spécule en pyjama.");
+      journal("BOURSE — 🌙 Séance NOCTURNE ce soir, 21h–23h. Le gap d'ouverture de demain intégrera aussi l'activité de la nuit.");
+    }
+  }
 
   // dividendes des clôtures écoulées (positions × cours de clôture national)
   if (S.natDivHour < 0) S.natDivHour = w.hNow; // migration : pas de rétroactif
@@ -963,9 +986,13 @@ function stockTick() {
 
 // la séance nationale suit l'heure RÉELLE (l'accélérateur de test n'agit
 // plus sur la bourse : elle est partagée par tous les joueurs)
+const nocturneDay = (dayKey) => natRnd("noct|" + dayKey) < 0.15;
 function marketOpen() {
   const d = new Date();
-  return d.getDay() >= 1 && d.getDay() <= 5 && d.getHours() >= 9 && d.getHours() < 18;
+  if (d.getDay() === 0 || d.getDay() === 6) return false;
+  const h = d.getHours();
+  if (h >= 9 && h < 18) return true;
+  return h >= 21 && h < 23 && nocturneDay(Math.floor(Date.now() / DAY));
 }
 
 // micro-ticks : toutes les ~8 s, frémissement déterministe autour de
@@ -1338,6 +1365,7 @@ function resolveEncounter(s, success) {
         applyShock(sym, pct);
         sfx("mono");
         lines.push({ ic: "📈", txt: `Tuyau en or : ${t.name} +${(pct * 100).toFixed(1).replace(".", ",")} % — pour toute la France`, cls: "up" });
+        if (!marketOpen()) lines.push({ ic: "🌙", txt: "Marché fermé : la rumeur pèsera à la prochaine ouverture", cls: "" });
         headline(`<b>TUYAU EN OR.</b> Votre rumeur pousse ${t.name} sur la cote nationale.`);
         journal(`Votre Informateur avait raison : <b>${t.name}</b> poussé de +${(pct * 100).toFixed(1).replace(".", ",")} % sur le marché national.`);
       } else {
@@ -2334,7 +2362,7 @@ function renderPanel() {
       ["👔", "Faites la Tournée du proprio", "passez voir un bien sur place : son loyer double pendant 24 h (×3 le week-end)."],
       ["👑", "Décrochez des Monopoles", "possédez TOUS les commerces d'une catégorie du quartier : loyers ×2 pour toujours."],
       ["🏗️", "Améliorez vos biens", "Ravalement, Gentrification, Flagship : le loyer grimpe à chaque niveau."],
-      ["📈", "Spéculez à la Bourse NATIONALE", "mêmes cours pour toute la France (séance 9h–18h, heure réelle), poussés par l'activité de tous les joueurs. Dividendes à la clôture."],
+      ["📈", "Spéculez à la Bourse NATIONALE", "mêmes cours pour toute la France (séance 9h–18h, heure réelle), poussés par l'activité de tous les joueurs. Dividendes à la clôture — et certains soirs, séance NOCTURNE 21h–23h. L'activité de la nuit pèse sur l'ouverture."],
       ["⚔️", "Surveillez les rivaux", "des magnats IA achètent le village — et de VRAIS joueurs possèdent leurs quartiers. Réunissez les parchemins d'un lieu pour l'exproprier."],
       ["🎯", "Suivez le guide", "les Défis du jour paient, et la pastille en bas d'écran vous dit toujours la meilleure action."],
     ];
@@ -2404,9 +2432,12 @@ function refreshBourseTexts() {
   const open = marketOpen();
   const chip = c.querySelector("#bourse-chip");
   if (chip) {
-    chip.textContent = open ? `🕐 Clôture dans ${18 - hod} h`
+    const noct = !weR && nocturneDay(Math.floor(Date.now() / DAY));
+    chip.textContent = open ? (hod >= 21 ? "🌙 Nocturne — clôture 23h" : `🕐 Clôture dans ${18 - hod} h`)
       : weR ? "🕐 Week-end — fermé"
-      : hod < 9 ? "🕐 Ouverture à 9h" : "🕐 Fermé — demain 9h";
+      : hod < 9 ? "🕐 Ouverture à 9h"
+      : noct && hod < 21 ? "🌙 NOCTURNE ce soir — 21h à 23h"
+      : "🕐 Fermé — demain 9h";
   }
   const idx = indexValue();
   const d = S.indexDayOpen > 0 ? (idx / S.indexDayOpen - 1) * 100 : 0;
