@@ -79,6 +79,14 @@ const ENCOUNTER_TYPES = {
 const npcOf = (id) => S.npcOwners[id] || null;
 const npcName = (id) => (NPCS[npcOf(id)] ? NPCS[npcOf(id)].name : "un rival");
 
+// Le vestiaire : avatars du joueur (personnalisation dans EMPIRE)
+const AVATARS = {
+  loup:       { name: "Le Jeune Loup" },
+  magnate:    { name: "La Magnate" },
+  heritier:   { name: "L'Héritier" },
+  baroudeuse: { name: "La Baroudeuse" },
+};
+
 // Titres de progression (satire oblige)
 const TITLES = [
   ["Petit Porteur", 0],
@@ -165,6 +173,7 @@ function freshState() {
     walk: { total: 0, day: -1, todayKm: 0, credited: 0 },
     deals: [],         // les « œufs » : dossiers qui se bouclent en km
     dealDay: -1,
+    avatar: "loup",    // personnage du joueur
     lastNpcDay: 0,
     lastChargesDay: 0,
     lastQuestDay: -1,
@@ -1484,6 +1493,12 @@ function renderPanel() {
       </div>
       ${pending >= 1 ? `<div class="btn-row" style="margin-bottom:12px">
         <button class="btn" id="a-collect-all">🪙 Tout encaisser — ${fmt(pending)}</button></div>` : ""}
+      <div class="avatar-row">
+        ${Object.keys(AVATARS).map((k) => `
+          <button class="avatar-pick ${S.avatar === k ? "on" : ""}" data-avatar="${k}" title="${AVATARS[k].name}">
+            <img src="assets/avatars/${k}.png" alt="${AVATARS[k].name}">
+          </button>`).join("")}
+      </div>
       <div class="walk-line">🚶 <b>${S.walk.total.toFixed(1)} km</b> parcourus · indemnités du jour : ${Math.min(S.walk.todayKm, 20).toFixed(1)}/20 km</div>
       ${S.deals.map((dl) => {
         const T = DEAL_TIERS[dl.tier];
@@ -1509,6 +1524,8 @@ function renderPanel() {
           }).join("")
         : `<div class="locked"><div class="big">🏚️</div><p>Vous ne possédez rien. C'est réparable.</p></div>`);
     $("#a-help")?.addEventListener("click", () => openPanel("aide"));
+    c.querySelectorAll(".avatar-pick").forEach((b) =>
+      b.addEventListener("click", () => { setAvatar(b.dataset.avatar); renderPanel(); }));
     $("#a-collect-all")?.addEventListener("click", () => { collectAll(); renderPanel(); });
     c.querySelectorAll(".prop-card").forEach((row) =>
       row.addEventListener("click", () => {
@@ -1881,23 +1898,45 @@ function radiusGeoJSON() {
   return { type: "Feature", geometry: { type: "Polygon", coordinates: [pts] } };
 }
 
+let walkAnimTimer = null;
 function setPlayer(lat, lon, fly = false) {
   // podomètre GPS : seuls les déplacements plausibles comptent (3–100 m)
+  let movedNow = false;
   if (player) {
     const d = dist(player.lat, player.lon, lat, lon);
-    if (d >= 3 && d <= 100) walkCredit(d);
+    if (d >= 3 && d <= 100) { walkCredit(d); movedNow = true; }
+    else if (d >= 1) movedNow = true;
   }
   player = { lat, lon };
   if (!playerMarker) {
     const el = document.createElement("div");
-    el.className = "player-dot";
-    playerMarker = new maplibregl.Marker({ element: el }).setLngLat([lon, lat]).addTo(map);
+    el.className = "player-marker";
+    el.innerHTML = `<img class="player-avatar" src="assets/avatars/${S.avatar}.png" alt=""><div class="player-ring"></div>`;
+    playerMarker = new maplibregl.Marker({ element: el, anchor: "bottom" })
+      .setLngLat([lon, lat]).addTo(map);
   } else {
     playerMarker.setLngLat([lon, lat]);
+  }
+  // l'avatar « marche » quelques secondes après chaque déplacement
+  if (movedNow) {
+    const el = playerMarker.getElement();
+    el.classList.add("walking");
+    clearTimeout(walkAnimTimer);
+    walkAnimTimer = setTimeout(() => el.classList.remove("walking"), 2000);
   }
   try { map.getSource("radius")?.setData(radiusGeoJSON()); } catch (e) {}
   if (fly) map.flyTo({ center: [lon, lat], zoom: Math.max(map.getZoom(), 16) });
   if (sheetPlace) openSheet(sheetPlace, true);
+}
+
+function setAvatar(key) {
+  if (!AVATARS[key]) return;
+  S.avatar = key;
+  const img = playerMarker?.getElement()?.querySelector(".player-avatar");
+  if (img) img.src = `assets/avatars/${key}.png`;
+  sfx("quest");
+  toast(`🕴️ Vous êtes désormais « ${AVATARS[key].name} »`);
+  save();
 }
 
 function startGPS() {
@@ -2109,11 +2148,10 @@ function buildPlaceLayers() {
       id: "spawn-icons", type: "symbol", source: "spawns",
       layout: {
         "icon-image": ["get", "icon"],
-        // taille réelle : un passant est bien plus petit qu'une maison,
-        // et une valise plus petite qu'un passant
+        // taille réelle : plus petit qu'une maison, mais repérable et tappable
         "icon-size": ["*",
-          ["match", ["get", "icon"], "sp-valise", 0.62, 1.0],
-          ["interpolate", ["linear"], ["zoom"], 14, 0.06, 16, 0.13, 18, 0.24]],
+          ["match", ["get", "icon"], "sp-valise", 0.75, 1.0],
+          ["interpolate", ["linear"], ["zoom"], 14, 0.08, 16, 0.17, 18, 0.28]],
         "icon-anchor": "bottom",
         "icon-allow-overlap": true,
         "icon-ignore-placement": true,

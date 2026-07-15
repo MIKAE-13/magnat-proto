@@ -1024,3 +1024,62 @@ body.night .deal-card { box-shadow: var(--shadow), inset 0 1.5px 0 rgba(255,255,
   box-shadow: 0 0 8px rgba(233, 192, 92, 0.5);
   transition: width 0.5s ease-out;
 }
+
+/* ---------- L'avatar du joueur (fini le point bleu) ---------- */
+.player-marker {
+  display: flex; flex-direction: column; align-items: center;
+  pointer-events: none;
+}
+.player-avatar {
+  height: 48px; width: auto;
+  filter: drop-shadow(0 5px 6px rgba(0,0,0,0.35));
+  animation: avatar-idle 2.6s ease-in-out infinite;
+  transform-origin: bottom center;
+  z-index: 1;
+}
+.player-ring {
+  width: 34px; height: 12px;
+  margin-top: -7px;
+  border-radius: 50%;
+  border: 3px solid #2E7CF6;
+  background: rgba(46, 124, 246, 0.18);
+  animation: ring-pulse 2s ease-in-out infinite;
+}
+@keyframes avatar-idle { 50% { transform: scaleY(0.985) scaleX(1.008); } }
+@keyframes ring-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(46, 124, 246, 0.35); }
+  50%      { box-shadow: 0 0 0 9px rgba(46, 124, 246, 0); }
+}
+/* la marche : petit pas balancé, façon Pokémon GO */
+.player-marker.walking .player-avatar {
+  animation: avatar-walk 0.5s ease-in-out infinite;
+}
+@keyframes avatar-walk {
+  0%, 100% { transform: rotate(-3.5deg) translateY(0); }
+  25%      { transform: rotate(0deg) translateY(-3px); }
+  50%      { transform: rotate(3.5deg) translateY(0); }
+  75%      { transform: rotate(0deg) translateY(-3px); }
+}
+
+/* ---------- Le vestiaire (EMPIRE) ---------- */
+.avatar-row {
+  display: flex; gap: 10px;
+  margin-bottom: 12px;
+}
+.avatar-pick {
+  flex: 1;
+  background: var(--card);
+  border: 2px solid var(--line);
+  border-radius: 16px;
+  padding: 8px 4px 4px;
+  cursor: pointer;
+  transition: transform 0.12s, border-color 0.12s;
+  box-shadow: var(--shadow);
+}
+.avatar-pick img { height: 56px; width: auto; max-width: 100%; object-fit: contain; }
+.avatar-pick:active { transform: scale(0.93); }
+.avatar-pick.on {
+  border-color: var(--gold);
+  box-shadow: 0 0 12px rgba(233, 192, 92, 0.45), var(--shadow);
+  background: linear-gradient(180deg, rgba(233,192,92,0.12), transparent);
+}
