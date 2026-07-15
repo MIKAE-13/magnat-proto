@@ -144,7 +144,7 @@ function freshStocks() {
   const st = {};
   for (const sym in TICKERS) {
     const b = TICKERS[sym].base;
-    st[sym] = { price: b, dayOpen: b, shares: 0, hist: [b], halted: 0 };
+    st[sym] = { price: b, dayOpen: b, shares: 0, hist: [b], intra: [b], halted: 0 };
   }
   return st;
 }
@@ -215,6 +215,9 @@ function load() {
       const parsed = JSON.parse(raw);
       const st = Object.assign(freshState(), parsed);
       st.stocks = Object.assign(freshStocks(), parsed.stocks || {});
+      for (const sym in st.stocks) {
+        if (!Array.isArray(st.stocks[sym].intra)) st.stocks[sym].intra = [st.stocks[sym].price];
+      }
       // migration v0.6 → v0.8 : l'ancien tableau npc devient npcOwners
       if (Array.isArray(st.npc) && st.npc.length && !Object.keys(st.npcOwners).length) {
         st.npc.forEach((id) => (st.npcOwners[id] = "betonneur"));
@@ -650,6 +653,8 @@ function stockTick() {
         if (st.halted > 0) continue;
         let ret = t.drift / 9 + gauss() * (t.vol / 2.2) + (S.eventNow?.shocks[sym] || 0);
         st.price *= 1 + ret;
+        st.intra.push(Math.round(st.price * 100) / 100);
+        if (st.intra.length > 120) st.intra.shift();
         const r = st.price / st.dayOpen;
         if (r > 1.15 || r < 0.85) {
           st.price = st.dayOpen * (r > 1 ? 1.15 : 0.85);
@@ -699,6 +704,8 @@ function microTick(now) {
     const r = st.price / st.dayOpen;
     if (r > 1.15) st.price = st.dayOpen * 1.15;
     if (r < 0.85) st.price = st.dayOpen * 0.85;
+    st.intra.push(Math.round(st.price * 100) / 100);
+    if (st.intra.length > 120) st.intra.shift();
   }
   S.indexHist.push(Math.round(indexValue()));
   if (S.indexHist.length > 120) S.indexHist.shift();
@@ -872,6 +879,8 @@ function applyShock(sym, pct) {
   const r = st.price / st.dayOpen;
   if (r > 1.15) st.price = st.dayOpen * 1.15;
   if (r < 0.85) st.price = st.dayOpen * 0.85;
+  st.intra.push(Math.round(st.price * 100) / 100);
+  if (st.intra.length > 120) st.intra.shift();
   st.shock = { pct, at: Date.now() };
 }
 
@@ -1853,15 +1862,27 @@ function renderPanel() {
 }
 
 // courbe vivante d'une carte de valeur : aire dégradée + point doré
-function drawSpark(cv, data) {
+function drawSpark(cv, data, openVal) {
   if (!cv || data.length < 2) return;
   const ctx = cv.getContext("2d");
-  const min = Math.min(...data), max = Math.max(...data);
+  let min = Math.min(...data), max = Math.max(...data);
+  if (openVal != null) { min = Math.min(min, openVal); max = Math.max(max, openVal); }
   const range = max - min || 1;
   const W = cv.width, Hh = cv.height, pad = 6;
   const X = (i) => pad + (i / (data.length - 1)) * (W - 2 * pad);
   const Y = (v) => Hh - pad - ((v - min) / range) * (Hh - 2.4 * pad);
   ctx.clearRect(0, 0, W, Hh);
+  // repère : le cours d'ouverture du jour, en pointillés
+  if (openVal != null) {
+    ctx.strokeStyle = night ? "rgba(255,255,255,0.18)" : "rgba(34,38,46,0.16)";
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 6]);
+    ctx.beginPath();
+    ctx.moveTo(pad, Y(openVal));
+    ctx.lineTo(W - pad, Y(openVal));
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
   const up = data[data.length - 1] >= data[0];
   const base = up ? (night ? "92,224,161" : "14,155,98") : "226,96,76";
   const grad = ctx.createLinearGradient(0, 0, 0, Hh);
@@ -1966,7 +1987,9 @@ function startBourseLive() {
     if (liveFrame % 5 === 0) {
       document.querySelectorAll(".sc-chart").forEach((cv) => {
         const st = S.stocks[cv.dataset.spark];
-        if (st) drawSpark(cv, st.hist.slice(-30).concat(st.price));
+        if (!st) return;
+        const base = st.intra && st.intra.length > 2 ? st.intra.slice(-90) : st.hist.slice(-30);
+        drawSpark(cv, base.concat(st.price), st.dayOpen);
       });
     }
     if (liveFrame++ % 12 === 0) refreshBourseTexts();
