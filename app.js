@@ -187,6 +187,7 @@ function freshState() {
     rentRushUntil: 0,
     scouted: {},       // repérage : placeId -> jour
     discounts: {},     // remises d'achat : placeId -> 0..0.15
+    frags: {},         // parchemins notariaux : placeId -> fragments réunis
     walk: { total: 0, day: -1, todayKm: 0, credited: 0 },
     deals: [],         // les « œufs » : dossiers qui se bouclent en km
     dealDay: -1,
@@ -798,6 +799,58 @@ function npcTick() {
 const SPAWN_TARGET = 3;
 const SPAWN_RADIUS_M = 60;
 
+// ---------------------------------------------------------------------------
+// Les Parchemins Notariaux : réunir les fragments d'un acte = posséder le lieu
+// (même s'il appartient à quelqu'un — l'OPA hostile par collection)
+// ---------------------------------------------------------------------------
+const fragsNeeded = (p) => Math.min(12, 3 + Math.floor(p.price / 20000));
+
+function collectParchment(s) {
+  const p = byId[s.fragFor];
+  S.spawns = S.spawns.filter((x) => x.id !== s.id);
+  updateSpawnSource();
+  if (!p) return;
+  burst(s, 5);
+  sfx("coin");
+  if (S.owned[p.id]) {
+    S.cash += 250;
+    flyCoin(s, "+250 ₣ (doublon d'archives)", "📜");
+    updateHUD(); save();
+    return;
+  }
+  S.frags[p.id] = (S.frags[p.id] || 0) + 1;
+  const need = fragsNeeded(p);
+  flyCoin(s, `${S.frags[p.id]}/${need} — ${p.name}`, "📜");
+  addXp(8);
+  tip("frag", "Réunissez TOUS les parchemins d'un lieu pour en devenir propriétaire par acte reconstitué — même s'il appartient déjà à quelqu'un.");
+  if (S.frags[p.id] >= need) acquireByFrags(p);
+  if (sheetPlace === p) openSheet(p, true);
+  updateHUD(); save();
+}
+
+function acquireByFrags(p) {
+  const victim = npcOf(p.id);
+  delete S.frags[p.id];
+  delete S.npcOwners[p.id];
+  delete S.discounts[p.id];
+  S.owned[p.id] = { level: 0, lastCollect: S.gameMs, inspectedUntil: S.gameMs + inspectHours() * HOUR };
+  burst(p, 14);
+  sfx("mono");
+  addXp(60);
+  questBump("invest");
+  if (victim) {
+    const n = NPCS[victim];
+    headline(`<b>ACTE RECONSTITUÉ.</b> Les parchemins réunis font de vous le propriétaire légal de ${p.name} — ${n.name} l'apprend par huissier.`);
+    journal(`Coup de maître : l'acte notarial de <b>${p.name}</b> reconstitué parchemin par parchemin — ${n.name} exproprié dans les règles de l'art. « C'est du vol légal », fulmine-t-il. Exactement.`);
+    S.npcLast[victim] = gameDay() - NPCS[victim].every; // il riposte
+  } else {
+    headline(`<b>ACTE RECONSTITUÉ.</b> Les parchemins réunis font de vous le propriétaire légal de ${p.name} — sans débourser un franc.`);
+    journal(`L'acte notarial de <b>${p.name}</b> reconstitué parchemin par parchemin : propriété acquise sans débourser un franc.`);
+  }
+  checkMonopolies(p.cat);
+  refreshAllMarkers(); updateHUD(); save();
+}
+
 function pickEncounterType() {
   let r = Math.random(), acc = 0;
   for (const k in ENCOUNTER_TYPES) {
@@ -823,6 +876,17 @@ function spawnGroup(n) {
   for (let i = 0; i < n; i++) {
     let type = pickEncounterType();
     if (type === "client" && !nearPois.length) type = "valise";
+    // ~30 % des apparitions sont des parchemins notariaux
+    let fragFor = null;
+    if (Math.random() < 0.30) {
+      const candidates = PLACES.filter((pl) => !S.owned[pl.id]);
+      if (candidates.length) {
+        const close = candidates.filter((pl) => dist(player.lat, player.lon, pl.lat, pl.lon) < 350);
+        const pool = close.length && Math.random() < 0.7 ? close : candidates;
+        type = "parchemin";
+        fragFor = pool[Math.floor(Math.random() * pool.length)].id;
+      }
+    }
     let baseLat = player.lat, baseLon = player.lon, placeId = null;
     let r = 30 + Math.random() * 90;
     if (type === "client") {
@@ -834,16 +898,14 @@ function spawnGroup(n) {
     const ang = Math.random() * 6.283;
     S.spawns.push({
       id: "s" + (++S.spawnSeq),
-      type, placeId,
+      type, placeId, fragFor,
       lat: baseLat + (r / 111320) * Math.sin(ang),
       lon: baseLon + (r / (111320 * Math.cos((baseLat * Math.PI) / 180))) * Math.cos(ang),
       exp: Date.now() + (120 + Math.random() * 120) * 1000,
     });
   }
   updateSpawnSource();
-  toast(n > 1
-    ? `✨ ${n} rencontres viennent d'apparaître autour de vous !`
-    : `${ENCOUNTER_TYPES[S.spawns[S.spawns.length - 1].type].emoji} Une rencontre est apparue près de vous !`);
+  toast("✨");
 }
 
 function spawnAlgorithm(now) {
@@ -907,6 +969,7 @@ function openEncounter(id) {
     notice(`Trop loin — approchez-vous à ${SPAWN_RADIUS_M} m (${Math.round(d)} m)`);
     return;
   }
+  if (s.type === "parchemin") { collectParchment(s); return; }
   startMinigame(s);
 }
 
@@ -1341,6 +1404,10 @@ function updateCoach() {
     if (next && S.cash >= priceToPay(next)) {
       txt = `🎯 Le monopole des ${CAT_META[t.cat].plural} est à portée — ${next.name}`;
       coachAction = () => openSheet(next);
+    } else if (Object.keys(S.frags).some((id) => byId[id] && fragsNeeded(byId[id]) - S.frags[id] === 1)) {
+      const id = Object.keys(S.frags).find((x) => byId[x] && fragsNeeded(byId[x]) - S.frags[x] === 1);
+      txt = `📜 Plus qu'UN parchemin pour posséder ${byId[id].name} !`;
+      coachAction = () => openSheet(byId[id]);
     } else if (S.deals.some((dl) => dl.km - dl.done <= 0.5)) {
       const dl = S.deals.find((x) => x.km - x.done <= 0.5);
       txt = `🗂️ Plus que ${Math.max(0, Math.round((dl.km - dl.done) * 1000))} m de marche pour boucler « ${DEAL_TIERS[dl.tier].name} »`;
@@ -1469,12 +1536,12 @@ function headline(html) {
   headlineTimer = setTimeout(() => ($("#headline").hidden = true), 7000);
 }
 
-function flyCoin(p, label) {
+function flyCoin(p, label, icon = "🪙") {
   if (!map) return;
   const px = map.project([p.lon, p.lat]);
   const el = document.createElement("div");
   el.className = "fly-coin";
-  el.textContent = "🪙 " + label;
+  el.textContent = icon + " " + label;
   el.style.left = px.x - 20 + "px";
   el.style.top = px.y - 20 + "px";
   document.body.appendChild(el);
@@ -1557,6 +1624,7 @@ function openSheet(p, silent = false) {
         <div class="stat">Prix <b>${fmt(cost)}</b>${npcOwned ? " (rachat ×1,5)" : ""}</div>
         <div class="stat">Rapportera <b>${fmt(p.price * ECO.rentDay)}</b>/jour</div>
         ${S.discounts[p.id] ? `<div class="stat">🔍 Dossier <b>−${Math.round(S.discounts[p.id] * 100)} %</b></div>` : ""}
+        <div class="stat">📜 Parchemins <b>${S.frags[p.id] || 0}/${fragsNeeded(p)}</b></div>
         ${npcOwned ? `<div class="stat">🏗️ <b>${npcName(p.id)}</b></div>` : ""}
       </div>
       <div class="btn-row">
@@ -1740,6 +1808,17 @@ function renderPanel() {
       </div>
       <div class="walk-line">⭐ <b>Niveau ${S.level}/${LEVEL_CAP}</b> · ${Math.round(S.xp)}/${xpNeeded(S.level)} XP · ☕ ×${S.items.cafe || 0} · 🥐 ×${S.items.croissant || 0}</div>
       ${S.level < LEVEL_CAP ? `<div class="walk-line">🎁 Niveau ${S.level + 1} : +${fmt(levelCash(S.level + 1))} et provisions${PERKS[S.level + 1] ? ` · <b>${PERKS[S.level + 1]}</b>` : ""}</div>` : `<div class="walk-line">👑 <b>Légende de Mouriès</b> — niveau maximum atteint.</div>`}
+      ${Object.keys(S.frags).length ? `<div class="cust-label" style="margin:4px 0 6px">📜 COLLECTIONS EN COURS</div>` +
+        Object.keys(S.frags)
+          .sort((a, b) => (S.frags[b] / fragsNeeded(byId[b])) - (S.frags[a] / fragsNeeded(byId[a])))
+          .slice(0, 3)
+          .map((id) => {
+            const p = byId[id], need = fragsNeeded(p);
+            return `<div class="deal-card">
+              <div class="deal-head">📜 <b>${p.name}</b><span class="deal-km">${S.frags[id]}/${need}</span></div>
+              <div class="deal-bar"><div class="deal-fill" style="width:${(S.frags[id] / need) * 100}%"></div></div>
+            </div>`;
+          }).join("") : ""}
       <div class="walk-line">🚶 <b>${S.walk.total.toFixed(1)} km</b> parcourus · indemnités du jour : ${Math.min(S.walk.todayKm, kmCap()).toFixed(1)}/${kmCap()} km</div>
       ${S.deals.map((dl) => {
         const T = DEAL_TIERS[dl.tier];
@@ -2400,6 +2479,10 @@ async function loadSprites() {
       .catch(() => {}),
   ]));
   if (!map.hasImage("coin")) map.addImage("coin", coinImage());
+  // le parchemin notarial (image générée, sinon dessin canvas)
+  await map.loadImage("assets/ui/parchemin.png")
+    .then((r) => { if (!map.hasImage("sp-parchemin")) map.addImage("sp-parchemin", r.data); })
+    .catch(() => { if (!map.hasImage("sp-parchemin")) map.addImage("sp-parchemin", encounterIcon("📜")); });
   // personnages 3D des rencontres (fallback : pastille emoji)
   await Promise.all(Object.keys(ENCOUNTER_TYPES).map((k) =>
     map.loadImage(`assets/char-${k}.png`)
