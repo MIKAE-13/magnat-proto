@@ -129,6 +129,9 @@ function freshState() {
     npcLast: {},       // clé du rival -> dernier jour d'achat
     npcAnnounced: {},  // rivaux déjà annoncés dans le journal
     tips: {},          // conseils déjà montrés
+    spawns: [],        // apparitions sur la carte (pièces, coffres)
+    spawnSeq: 0,
+    rentRushUntil: 0,  // « ruée sur les loyers » (coffre mystère)
     lastNpcDay: 0,
     lastChargesDay: 0,
     lastQuestDay: -1,
@@ -244,6 +247,7 @@ function rentMult(p) {
     m *= isWeekend() ? ECO.inspectWeekendMult : ECO.inspectMult;
   }
   if (hasMonopoly(p.cat)) m *= ECO.monoMult;
+  if (S.gameMs < S.rentRushUntil) m *= 2; // coffre « Ruée sur les loyers »
   return m;
 }
 
@@ -454,14 +458,27 @@ function stockTick() {
     const dow = (S.startDow + dayI) % 7;
     const we = dow === 0 || dow === 6;
 
-    // événement du lundi 10h (choc étalé sur 18 h de séance = 2 jours)
-    if (hod === 10 && dow === 1 && !S.eventNow) {
+    // grands événements le lundi ET le jeudi à 10h (chocs étalés sur 2 jours)
+    if (hod === 10 && (dow === 1 || dow === 4) && !S.eventNow) {
       const ev = MARKET_EVENTS[Math.floor(Math.random() * MARKET_EVENTS.length)];
       const shocks = {};
       for (const sym in ev.shocks) shocks[sym] = ev.shocks[sym] / 18;
       S.eventNow = { head: ev.head, shocks, hoursLeft: 18 };
       headline(`<b>${ev.head}</b>`);
       journal(`BOURSE — ${ev.head}`);
+    }
+
+    // rumeur de mi-journée (~1 jour sur 2) : petit choc sur une valeur
+    if (hod === 13 && !we && !S.eventNow && Math.random() < 0.5) {
+      const syms = Object.keys(TICKERS);
+      const sym = syms[Math.floor(Math.random() * syms.length)];
+      const mag = (0.04 + Math.random() * 0.05) * (Math.random() < 0.5 ? -1 : 1);
+      S.eventNow = {
+        head: `RUMEUR — ${TICKERS[sym].name} : ${mag > 0 ? "un gros contrat se murmure en coulisses" : "des comptes qui toussent, dit-on"}.`,
+        shocks: { [sym]: mag / 3 },
+        hoursLeft: 3,
+      };
+      journal(`BOURSE — ${S.eventNow.head}`);
     }
 
     if (!we && hod === 9) {
@@ -473,7 +490,7 @@ function stockTick() {
       for (const sym in S.stocks) {
         const st = S.stocks[sym], t = TICKERS[sym];
         if (st.halted > 0) continue;
-        let ret = t.drift / 9 + gauss() * (t.vol / 3) + (S.eventNow?.shocks[sym] || 0);
+        let ret = t.drift / 9 + gauss() * (t.vol / 2.2) + (S.eventNow?.shocks[sym] || 0);
         st.price *= 1 + ret;
         const r = st.price / st.dayOpen;
         if (r > 1.15 || r < 0.85) {
@@ -520,7 +537,7 @@ function microTick(now) {
   for (const sym in S.stocks) {
     const st = S.stocks[sym], t = TICKERS[sym];
     if (st.halted > 0) continue;
-    st.price *= 1 + gauss() * (t.vol / 20);
+    st.price *= 1 + gauss() * (t.vol / 14);
     const r = st.price / st.dayOpen;
     if (r > 1.15) st.price = st.dayOpen * 1.15;
     if (r < 0.85) st.price = st.dayOpen * 0.85;
@@ -597,6 +614,83 @@ function npcTick() {
 }
 
 // ---------------------------------------------------------------------------
+// Apparitions sur la carte (façon Pokémon GO) : pièces et coffres mystère
+// ---------------------------------------------------------------------------
+const SPAWN_TARGET = 3;
+const SPAWN_RADIUS_M = 60;
+
+function ensureSpawns() {
+  const before = S.spawns.length;
+  S.spawns = S.spawns.filter((s) => s.expires > S.gameMs);
+  let changed = S.spawns.length !== before;
+  while (S.spawns.length < SPAWN_TARGET) {
+    const anchor = PLACES[Math.floor(Math.random() * PLACES.length)];
+    const r = 40 + Math.random() * 140;
+    const ang = Math.random() * 6.283;
+    const lat = anchor.lat + (r / 111320) * Math.sin(ang);
+    const lon = anchor.lon + (r / (111320 * Math.cos((anchor.lat * Math.PI) / 180))) * Math.cos(ang);
+    const chest = Math.random() < 0.15;
+    S.spawns.push({
+      id: "s" + (++S.spawnSeq),
+      type: chest ? "chest" : "coins",
+      lat, lon,
+      value: chest ? 0 : Math.round((100 + Math.random() * 300) / 10) * 10,
+      expires: S.gameMs + (2 + Math.random() * 3) * HOUR,
+    });
+    changed = true;
+  }
+  if (changed) updateSpawnSource();
+}
+
+function spawnsGeoJSON() {
+  return {
+    type: "FeatureCollection",
+    features: S.spawns.map((s) => ({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [s.lon, s.lat] },
+      properties: { id: s.id, icon: s.type === "chest" ? "chest" : "coin" },
+    })),
+  };
+}
+
+function updateSpawnSource() {
+  try { map.getSource("spawns")?.setData(spawnsGeoJSON()); } catch (e) {}
+}
+
+function collectSpawn(id) {
+  const s = S.spawns.find((x) => x.id === id);
+  if (!s || !player) return;
+  let d = dist(player.lat, player.lon, s.lat, s.lon);
+  if (d > SPAWN_RADIUS_M && simMode) { setPlayer(s.lat, s.lon); d = 0; }
+  if (d > SPAWN_RADIUS_M) {
+    toast(`Trop loin — approchez-vous à ${SPAWN_RADIUS_M} m (${Math.round(d)} m)`);
+    return;
+  }
+  S.spawns = S.spawns.filter((x) => x.id !== id);
+  updateSpawnSource();
+  burst(s, 8);
+  if (s.type === "coins") {
+    S.cash += s.value;
+    sfx("coin");
+    toast(`💰 Pièces trouvées : +${fmt(s.value)}`, "gain");
+  } else {
+    sfx("mono");
+    if (Math.random() < 0.55) {
+      const gain = Math.round((500 + Math.random() * 1200) / 10) * 10;
+      S.cash += gain;
+      headline(`<b>HÉRITAGE SURPRISE.</b> Un vieux cousin oublié vous lègue ${fmt(gain)}. Vous ne vous souvenez pas de lui — l'argent, si.`);
+      journal(`Coffre mystère : héritage surprise de ${fmt(gain)}.`);
+    } else {
+      S.rentRushUntil = S.gameMs + 2 * HOUR;
+      headline(`<b>RUÉE SUR LES LOYERS.</b> Tous vos loyers doublent pendant 2 heures. Vos locataires l'ignorent encore.`);
+      journal(`Coffre mystère : loyers ×2 pendant 2 h.`);
+    }
+  }
+  tip("spawn", "Des pièces et des coffres apparaissent dans le village au fil de la journée. Ramassez-les en passant — les coffres cachent des bonus rares.");
+  updateHUD(); save();
+}
+
+// ---------------------------------------------------------------------------
 // Tick principal
 // ---------------------------------------------------------------------------
 function tick() {
@@ -627,6 +721,7 @@ function tick() {
 
   if (now - lastUiRefresh > 2500) {
     lastUiRefresh = now;
+    ensureSpawns();
     refreshAllMarkers();
     updateHUD();
     if (sheetPlace) openSheet(sheetPlace, true);
@@ -759,12 +854,21 @@ $("#coach").addEventListener("click", () => { if (coachAction) coachAction(); })
 // ---------------------------------------------------------------------------
 let audioCtx = null;
 function ensureAudio() {
-  if (!audioCtx) {
-    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
-  }
-  if (audioCtx && audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
+  try {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      // déverrouillage iOS : jouer un buffer muet dans le geste utilisateur
+      const b = audioCtx.createBuffer(1, 1, 22050);
+      const src = audioCtx.createBufferSource();
+      src.buffer = b;
+      src.connect(audioCtx.destination);
+      src.start(0);
+    }
+    if (audioCtx.state !== "running") audioCtx.resume().catch(() => {});
+  } catch (e) {}
 }
-document.addEventListener("pointerdown", ensureAudio, { once: true });
+// à CHAQUE tap (iOS suspend le contexte à sa guise — on le réveille sans cesse)
+document.addEventListener("pointerdown", ensureAudio);
 
 function note(freq, t0, dur, type = "sine", vol = 0.12) {
   const o = audioCtx.createOscillator();
@@ -778,7 +882,8 @@ function note(freq, t0, dur, type = "sine", vol = 0.12) {
 }
 
 function sfx(kind) {
-  if (S.muted || !audioCtx || audioCtx.state !== "running") return;
+  if (S.muted || !audioCtx) return;
+  if (audioCtx.state !== "running") { ensureAudio(); if (audioCtx.state !== "running") return; }
   const t = audioCtx.currentTime;
   try {
     if (kind === "coin") {
@@ -947,6 +1052,8 @@ setInterval(() => {
       map.setPaintProperty("place-coin", "icon-translate", [0, Math.sin(t * 2.6) * 4]);
     if (map.getLayer("place-ring"))
       map.setPaintProperty("place-ring", "circle-stroke-opacity", 0.62 + 0.28 * Math.sin(t * 2));
+    if (map.getLayer("spawn-icons"))
+      map.setPaintProperty("spawn-icons", "icon-translate", [0, Math.sin(t * 2.2 + 1.5) * 5]);
   } catch (e) {}
 }, 150);
 
@@ -1479,6 +1586,27 @@ let placesWired = false;
 
 const spritePrefix = () => (night && nightSprites ? "n-" : "d-");
 
+function chestImage() {
+  const c = document.createElement("canvas");
+  c.width = c.height = 64;
+  const x = c.getContext("2d");
+  x.fillStyle = "#A9702F";
+  x.beginPath(); x.roundRect(8, 20, 48, 34, 7); x.fill();
+  x.fillStyle = "#8A5620";
+  x.beginPath(); x.roundRect(8, 20, 48, 13, 7); x.fill();
+  x.fillStyle = "#E9C05C";
+  x.fillRect(28, 20, 8, 34);
+  x.beginPath(); x.arc(32, 40, 6, 0, 7); x.fill();
+  x.strokeStyle = "#6E4218"; x.lineWidth = 3;
+  x.beginPath(); x.roundRect(8, 20, 48, 34, 7); x.stroke();
+  x.fillStyle = "#FFF2C4";
+  x.beginPath();
+  x.moveTo(50, 4); x.lineTo(53, 10); x.lineTo(59, 13); x.lineTo(53, 16);
+  x.lineTo(50, 22); x.lineTo(47, 16); x.lineTo(41, 13); x.lineTo(47, 10);
+  x.closePath(); x.fill();
+  return x.getImageData(0, 0, 64, 64);
+}
+
 function coinImage() {
   const c = document.createElement("canvas");
   c.width = c.height = 64;
@@ -1494,7 +1622,7 @@ function coinImage() {
 }
 
 // certaines catégories ont une 2e variante de bâtiment (anti-répétition)
-const VARIANT_CATS = ["commerce", "artisanat"];
+const VARIANT_CATS = ["commerce", "artisanat", "restaurant", "boulangerie", "culture"];
 const sprName = (p) =>
   p.cat + (VARIANT_CATS.includes(p.cat) && parseInt(p.id.slice(1), 10) % 2 ? "-b" : "");
 
@@ -1520,6 +1648,7 @@ async function loadSprites() {
       .catch(() => {}),
   ]));
   if (!map.hasImage("coin")) map.addImage("coin", coinImage());
+  if (!map.hasImage("chest")) map.addImage("chest", chestImage());
   spritesReady = true;
 }
 
@@ -1609,8 +1738,28 @@ function buildPlaceLayers() {
       },
     });
   }
+  if (!map.getSource("spawns")) {
+    map.addSource("spawns", { type: "geojson", data: spawnsGeoJSON() });
+    map.addLayer({
+      id: "spawn-icons", type: "symbol", source: "spawns",
+      layout: {
+        "icon-image": ["get", "icon"],
+        "icon-size": ["interpolate", ["linear"], ["zoom"], 14, 0.35, 16, 0.55, 18, 0.8],
+        "icon-allow-overlap": true,
+        "icon-ignore-placement": true,
+      },
+    });
+  } else {
+    map.getSource("spawns").setData(spawnsGeoJSON());
+  }
   if (!placesWired) {
     placesWired = true;
+    map.on("click", "spawn-icons", (e) => {
+      const f = e.features && e.features[0];
+      if (f) collectSpawn(f.properties.id);
+    });
+    map.on("mouseenter", "spawn-icons", () => (map.getCanvas().style.cursor = "pointer"));
+    map.on("mouseleave", "spawn-icons", () => (map.getCanvas().style.cursor = ""));
     map.on("click", "place-bld", (e) => {
       const f = e.features && e.features[0];
       if (!f) return;
