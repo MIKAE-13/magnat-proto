@@ -784,3 +784,114 @@ body.night #mg-cursor { background: #fff; }
 .shock-badge.up { border: 1.5px solid var(--emerald); color: var(--emerald); background: var(--emerald-soft); }
 .shock-badge.down { border: 1.5px solid var(--coral); color: var(--coral); background: rgba(226, 96, 76, 0.12); }
 .shock-badge[hidden] { display: none; }
+
+/* ============ GAME FEEL : relief, rebond, matière ============ */
+
+/* Boutons « pressables » façon jeu mobile */
+.btn {
+  background: linear-gradient(180deg, #17B877 0%, #0C8A57 100%);
+  border-bottom: 3px solid #086B43;
+  border-radius: 14px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 6px 14px rgba(14, 155, 98, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+.btn:active:not(:disabled) { transform: translateY(2px); border-bottom-width: 1px; }
+.btn.gold {
+  background: linear-gradient(180deg, #E9C05C 0%, #C0902A 100%);
+  border-bottom-color: #97701D;
+  box-shadow: 0 6px 14px rgba(201, 155, 46, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+.btn.sell {
+  background: linear-gradient(180deg, #EE7561 0%, #CE4A36 100%);
+  border-bottom-color: #A33A29;
+  box-shadow: 0 6px 14px rgba(226, 96, 76, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+.btn.ghost {
+  background: transparent;
+  border: 2px solid var(--emerald);
+  border-bottom-width: 3px;
+  text-shadow: none;
+  box-shadow: none;
+}
+.btn:disabled {
+  background: var(--line);
+  border-bottom: 3px solid rgba(0, 0, 0, 0.08);
+  text-shadow: none;
+  box-shadow: none;
+}
+
+/* Toasts qui rebondissent */
+.toast {
+  border-radius: 14px;
+  padding: 10px 18px;
+  font-size: 14px;
+  animation: toast-bounce 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+.toast.gain {
+  background: linear-gradient(180deg, #17B877, #0C8A57);
+  border: 1.5px solid var(--gold-bright);
+}
+@keyframes toast-bounce {
+  0% { transform: translateY(18px) scale(0.8); opacity: 0; }
+  60% { transform: translateY(-5px) scale(1.05); }
+  100% { transform: translateY(0) scale(1); }
+}
+
+/* HUD : pastilles en relief */
+#worth-pill, #mono-chip {
+  box-shadow: var(--shadow), inset 0 1.5px 0 rgba(255, 255, 255, 0.65);
+  border-bottom: 2px solid rgba(0, 0, 0, 0.07);
+}
+body.night #worth-pill, body.night #mono-chip {
+  box-shadow: var(--shadow), inset 0 1.5px 0 rgba(255, 255, 255, 0.07);
+  border-bottom-color: rgba(0, 0, 0, 0.35);
+}
+
+/* Jauge de monopole compacte et tappable */
+#mono-chip {
+  pointer-events: auto;
+  cursor: pointer;
+  min-width: 0;
+  width: auto;
+  padding: 6px 12px 7px;
+  transition: transform 0.1s;
+}
+#mono-chip:active { transform: scale(0.94); }
+#mono-label { font-size: 12px; margin-bottom: 4px; }
+#mono-segs .seg { min-width: 14px; }
+
+/* Guide d'action : le bouton de jeu, pas une barre d'info */
+#coach {
+  background: linear-gradient(180deg, #343B47, #22262E);
+  border-bottom: 3px solid #14171D;
+  animation: toast-bounce 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+#coach:active { transform: translateX(-50%) translateY(2px); }
+#coach.gain {
+  background: linear-gradient(180deg, #17B877, #0C8A57);
+  border: 1.5px solid var(--gold-bright);
+  border-bottom: 3px solid #086B43;
+  animation: toast-bounce 0.4s, coach-glow 1.8s ease-in-out 0.4s infinite;
+}
+@keyframes coach-glow {
+  50% { box-shadow: 0 0 22px rgba(233, 192, 92, 0.6), 0 8px 20px rgba(0, 0, 0, 0.3); }
+}
+
+/* Onglet actif en relief */
+.tab.active {
+  background: linear-gradient(180deg, var(--emerald-soft), rgba(14, 155, 98, 0.04));
+  box-shadow: inset 0 1.5px 0 rgba(255, 255, 255, 0.5);
+}
+body.night .tab.active { box-shadow: inset 0 1.5px 0 rgba(255, 255, 255, 0.08); }
+
+/* lien d'aide dans l'Empire */
+.help-link {
+  border: 0; background: none;
+  color: var(--emerald);
+  font-size: 12.5px; font-weight: 800;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+}

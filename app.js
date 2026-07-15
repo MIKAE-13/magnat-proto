@@ -102,15 +102,15 @@ const QUEST_DEFS = {
 // La cote (bourse) — personnalités issues de la simulation
 // ---------------------------------------------------------------------------
 const TICKERS = {
-  KWA: { name: "KAWA GROUP",          icon: "☕", drift: 0.0006, vol: 0.012, div: 0.0036, desc: "Cafés & torréfacteurs — cyclique du matin" },
-  GLU: { name: "GLUTEN & FILS",       icon: "🥖", drift: 0.0004, vol: 0.008, div: 0.0060, desc: "Boulangeries — valeur de bon père de famille" },
-  HBL: { name: "HOUBLON HOLDING",     icon: "🍺", drift: 0.0006, vol: 0.014, div: 0.0030, desc: "Bars & brasseries — monte quand il fait soif" },
-  FKT: { name: "FOURCHETTE CAPITAL",  icon: "🍽️", drift: 0.0005, vol: 0.013, div: 0.0030, desc: "Restaurants — sensible aux événements" },
-  CDD: { name: "CADDIE NATIONAL",     icon: "🛒", drift: 0.0003, vol: 0.006, div: 0.0054, desc: "Commerces — défensive, ennuyeuse, sûre" },
-  CDV: { name: "CULTURE & DIVIDENDES",icon: "🎭", drift: 0.0004, vol: 0.015, div: 0.0024, desc: "Culture — saisonnière, festivals" },
-  TRN: { name: "TRANSIT NATIONAL",    icon: "🚆", drift: 0.0002, vol: 0.018, div: 0.0045, desc: "Transports — volatile, grèves comprises" },
-  VRT: { name: "VERTLIGNE",           icon: "🌿", drift: 0.0004, vol: 0.016, div: 0.0018, desc: "Sport & plein air — météo-dépendante" },
-  SBT: { name: "STARTUPBRO TECH",     icon: "🚀", drift: 0.0012, vol: 0.055, div: 0,      desc: "Jamais rentable. Pure spéculation. Bonne chance." },
+  KWA: { name: "KAWA GROUP",          icon: "☕", base: 45,  drift: 0.0006, vol: 0.012, div: 0.0036, desc: "Cafés & torréfacteurs — cyclique du matin" },
+  GLU: { name: "GLUTEN & FILS",       icon: "🥖", base: 12,  drift: 0.0004, vol: 0.008, div: 0.0060, desc: "Boulangeries — valeur de bon père de famille" },
+  HBL: { name: "HOUBLON HOLDING",     icon: "🍺", base: 28,  drift: 0.0006, vol: 0.014, div: 0.0030, desc: "Bars & brasseries — monte quand il fait soif" },
+  FKT: { name: "FOURCHETTE CAPITAL",  icon: "🍽️", base: 65,  drift: 0.0005, vol: 0.013, div: 0.0030, desc: "Restaurants — sensible aux événements" },
+  CDD: { name: "CADDIE NATIONAL",     icon: "🛒", base: 8,   drift: 0.0003, vol: 0.006, div: 0.0054, desc: "Commerces — l'action populaire, défensive, sûre" },
+  CDV: { name: "CULTURE & DIVIDENDES",icon: "🎭", base: 90,  drift: 0.0004, vol: 0.015, div: 0.0024, desc: "Culture — saisonnière, festivals" },
+  TRN: { name: "TRANSIT NATIONAL",    icon: "🚆", base: 150, drift: 0.0002, vol: 0.018, div: 0.0045, desc: "Transports — l'institution. Volatile, grèves comprises" },
+  VRT: { name: "VERTLIGNE",           icon: "🌿", base: 22,  drift: 0.0004, vol: 0.016, div: 0.0018, desc: "Sport & plein air — météo-dépendante" },
+  SBT: { name: "STARTUPBRO TECH",     icon: "🚀", base: 340, drift: 0.0012, vol: 0.055, div: 0,      desc: "La plus chère de la cote. Jamais rentable. Bonne chance." },
 };
 
 const MARKET_EVENTS = [
@@ -130,7 +130,10 @@ const SAVE_KEY = "magnat-proto-v1";
 
 function freshStocks() {
   const st = {};
-  for (const sym in TICKERS) st[sym] = { price: 100, dayOpen: 100, shares: 0, hist: [100], halted: 0 };
+  for (const sym in TICKERS) {
+    const b = TICKERS[sym].base;
+    st[sym] = { price: b, dayOpen: b, shares: 0, hist: [b], halted: 0 };
+  }
   return st;
 }
 
@@ -179,6 +182,7 @@ function freshState() {
     indexHist: [35_420],
     indexDayOpen: 35_420,
     muted: false,
+    coteV2: true,
   };
 }
 
@@ -204,6 +208,22 @@ function load() {
       }
       // les rencontres sont éphémères : on repart propre à chaque session
       st.spawns = [];
+      // migration cote v2 : chaque action a désormais son prix de base —
+      // les positions existantes sont soldées au cours (aucune perte)
+      if (!parsed.coteV2) {
+        let refund = 0;
+        for (const sym in st.stocks) refund += (st.stocks[sym].shares || 0) * st.stocks[sym].price;
+        st.cash += refund;
+        st.stocks = freshStocks();
+        st.indexHist = [35_420];
+        st.indexDayOpen = 35_420;
+        st.coteV2 = true;
+        st.journal.unshift({
+          day: Math.floor(st.gameMs / DAY),
+          text: "LA COTE A ÉTÉ REBASÉE — chaque valeur a désormais son propre cours (de CADDIE à 8 ₣ à STARTUPBRO à 340 ₣)." +
+            (refund > 0 ? ` Vos positions ont été soldées : +${Math.round(refund).toLocaleString("fr-FR")} ₣ de liquidités.` : ""),
+        });
+      }
       // migration : caler l'horloge du jeu sur l'heure réelle
       if (!parsed.clockAnchored) {
         const d = new Date();
@@ -590,11 +610,11 @@ function microTick(now) {
   if (S.indexHist.length > 120) S.indexHist.shift();
 }
 
-// indice global : moyenne de la cote, exprimée en points (base 35 420)
+// indice global : moyenne des performances de la cote, en points (base 35 420)
 function indexValue() {
   const syms = Object.keys(S.stocks);
-  const mean = syms.reduce((a, s) => a + S.stocks[s].price, 0) / syms.length;
-  return mean * 354.2;
+  const mean = syms.reduce((a, s) => a + S.stocks[s].price / TICKERS[s].base, 0) / syms.length;
+  return mean * 35_420;
 }
 
 function trade(sym, qty) {
@@ -964,16 +984,12 @@ function updateHUD() {
 
   checkTitle();
   ensureQuests();
-  const done = S.quests.items.filter((q) => q.done).length;
-  $("#quest-count").textContent = `${done}/${S.quests.items.length}`;
-  $("#quest-chip").classList.toggle("done", done === S.quests.items.length);
 
   const t = monopolyTarget();
   const mono = $("#mono-chip");
   if (t) {
     mono.hidden = false;
-    $("#mono-label").textContent =
-      `${CAT_META[t.cat].icon} Monopole des ${CAT_META[t.cat].plural} — ${t.mine}/${t.total}`;
+    $("#mono-label").textContent = `${CAT_META[t.cat].icon} Monopole ${t.mine}/${t.total}`;
     const segs = $("#mono-segs");
     if (segs.childElementCount !== t.total) {
       segs.innerHTML = Array.from({ length: t.total }, () => '<div class="seg"></div>').join("");
@@ -1010,7 +1026,7 @@ function updateCoach() {
   let txt = null, cls = "";
 
   if (pending >= 1) {
-    txt = `🪙 Encaisser les loyers — +${fmt(pending)}`;
+    txt = `🪙 +${fmt(pending)} à encaisser !`;
     cls = "gain";
     coachAction = collectAll;
   } else if (!ids.length) {
@@ -1238,11 +1254,14 @@ $("#sheet-close").addEventListener("click", () => {
   updateCoach();
 });
 
-$("#quest-chip").addEventListener("click", () => {
-  setTab("empire");
-  openPanel("empire");
+// la jauge de monopole est tappable : vole vers la prochaine pièce à acheter
+$("#mono-chip").addEventListener("click", () => {
+  const t = monopolyTarget();
+  if (!t) return;
+  const next = PLACES.filter((p) => p.cat === t.cat && !S.owned[p.id])
+    .sort((a, b) => priceToPay(a) - priceToPay(b))[0];
+  if (next) openSheet(next);
 });
-$("#help-chip").addEventListener("click", () => openPanel("aide"));
 $("#mg-btn").addEventListener("click", () => endMinigame(true));
 $("#mg-flee").addEventListener("click", () => endMinigame(false));
 
@@ -1343,6 +1362,7 @@ function renderPanel() {
       <div class="panel-sub">
         <span class="title-chip">${TITLES[S.titleIdx][0]}</span>
         &nbsp;Jour ${gameDay() + 1} · ${ids.length} propriété${ids.length > 1 ? "s" : ""} · ${S.monopolies.length} monopole${S.monopolies.length > 1 ? "s" : ""}${S.streak > 1 ? ` · 🔥 ${S.streak} j` : ""}
+        &nbsp;<button class="help-link" id="a-help">❓ Comment jouer</button>
       </div>
       <div class="quest-list">
         ${S.quests.items.map((q) => {
@@ -1374,6 +1394,7 @@ function renderPanel() {
               <div class="val">+${fmt(rentPerDay(p))}/j</div></div>`;
           }).join("")
         : `<div class="locked"><div class="big">🏚️</div><p>Vous ne possédez rien. C'est réparable.</p></div>`);
+    $("#a-help")?.addEventListener("click", () => openPanel("aide"));
     $("#a-collect-all")?.addEventListener("click", () => { collectAll(); renderPanel(); });
     c.querySelectorAll(".prop-row").forEach((row) =>
       row.addEventListener("click", () => {
@@ -2007,36 +2028,18 @@ const refreshMarker = () => refreshAllMarkers();
 // ---------------------------------------------------------------------------
 // Panneau dev
 // ---------------------------------------------------------------------------
-$("#btn-sound").textContent = S.muted ? "🔇" : "🔊";
-$("#btn-sound").addEventListener("click", () => {
-  S.muted = !S.muted;
-  $("#btn-sound").textContent = S.muted ? "🔇" : "🔊";
-  if (!S.muted) { ensureAudio(); sfx("coin"); }
-  save();
-});
 $("#btn-sim").addEventListener("click", () => {
   simMode = !simMode;
   $("#btn-sim").classList.toggle("on", simMode);
   if (simMode) toast("🚶 Touchez la carte pour vous déplacer");
 });
-const SPEEDS = [1, 60, 720];
-$("#btn-speed").addEventListener("click", () => {
-  speed = SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length];
-  $("#btn-speed").textContent = `⏩ ×${speed}`;
-  $("#btn-speed").classList.toggle("on", speed > 1);
-  toast(speed > 1 ? `⏩ Temps accéléré ×${speed} (test)` : "🕰️ Temps réel");
-});
-$("#btn-theme").addEventListener("click", () => {
-  themeForced = themeForced === null ? !night : (themeForced ? null : true);
-  if (themeForced === null) toast("🌗 Thème automatique (nuit après 18h30)");
-  applyTheme(wantNight());
-});
-$("#btn-reset").addEventListener("click", () => {
-  if (confirm("Tout recommencer ? Votre empire sera dissous.")) {
-    localStorage.removeItem(SAVE_KEY);
-    location.reload();
-  }
-});
+// outils de test accessibles depuis la console : magnat.speed(60), magnat.reset()
+window.magnat = {
+  speed: (s) => { speed = s || 1; toast(`⏩ ×${speed}`); },
+  reset: () => { localStorage.removeItem(SAVE_KEY); location.reload(); },
+  theme: () => { themeForced = themeForced === null ? !night : null; applyTheme(wantNight()); },
+  mute: () => { S.muted = !S.muted; save(); },
+};
 
 // ---------------------------------------------------------------------------
 // Onboarding + démarrage
