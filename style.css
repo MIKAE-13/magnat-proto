@@ -663,3 +663,25 @@ body.night .stock-card {
 }
 .help-step .hs-icon { font-size: 22px; width: 30px; text-align: center; }
 .help-step .hs-sub { color: var(--ink-soft); font-size: 13px; margin-top: 1px; }
+
+/* ---------- Panneaux PLEIN ÉCRAN (Bourse, Journal, Empire, Aide) ---------- */
+#panel {
+  top: 0; left: 0; right: 0;
+  bottom: calc(64px + env(safe-area-inset-bottom));
+  border-radius: 0;
+  border: 0;
+  box-shadow: none;
+  background: var(--cream);
+  padding: calc(14px + env(safe-area-inset-top)) 18px 24px;
+  animation: panel-in 0.25s ease-out;
+}
+@keyframes panel-in { from { transform: translateY(26px); opacity: 0; } }
+#panel-close {
+  background: var(--card);
+  border: 1px solid var(--line);
+  width: 32px; height: 32px;
+}
+
+/* les cartes ne cascadent qu'à l'OUVERTURE du panneau, pas à chaque maj */
+.stock-card { animation: none; }
+#panel-content.animate .stock-card { animation: card-in 0.35s ease-out both; }

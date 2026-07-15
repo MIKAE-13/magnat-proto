@@ -607,7 +607,6 @@ function tick() {
     refreshAllMarkers();
     updateHUD();
     if (sheetPlace) openSheet(sheetPlace, true);
-    if (!$("#panel").hidden && panelTab === "bourse") renderPanel();
   }
   save();
 }
@@ -896,55 +895,40 @@ function renderPanel() {
   const scroll = $("#panel").scrollTop;
 
   if (panelTab === "bourse") {
-    const H = Math.floor(S.gameMs / HOUR);
-    const hod = (9 + H) % 24;
-    const open = marketOpen();
-    const chipTxt = open
-      ? `🕐 Clôture dans ${18 - hod} h`
-      : isWeekend() ? "🕐 Week-end — fermé"
-      : hod < 9 ? "🕐 Ouverture à 9h" : "🕐 Fermé — demain 9h";
-    const idx = indexValue();
-    const idxD = S.indexDayOpen > 0 ? (idx / S.indexDayOpen - 1) * 100 : 0;
-    const pts = Math.round(idx).toLocaleString("fr-FR");
-
+    // le squelette est construit UNE fois ; ensuite seuls les chiffres et
+    // les courbes bougent (aucun rechargement visible)
+    c.classList.toggle("animate", panelJustOpened);
+    panelJustOpened = false;
     c.innerHTML = `
       <div class="bourse-top">
         <h2>LA BOURSE</h2>
-        <span class="close-chip">${chipTxt}</span>
+        <span class="close-chip" id="bourse-chip"></span>
       </div>
       <div class="index-row">
-        <span class="index-val">${pts} pts</span>
-        <span class="index-delta ${idxD >= 0 ? "up" : "down"}">${idxD >= 0 ? "↗ +" : "↘ "}${Math.abs(idxD).toFixed(1).replace(".", ",")} %</span>
+        <span class="index-val" id="idx-val">—</span>
+        <span class="index-delta" id="idx-delta"></span>
       </div>
       <canvas id="index-chart" width="680" height="300"></canvas>
-      ${S.eventNow ? `<div class="event-banner">🚨 ${S.eventNow.head}</div>` : ""}
-      ${Object.keys(TICKERS).map((sym) => {
+      <div id="bourse-event"></div>
+      ${Object.keys(TICKERS).map((sym, i) => {
         const st = S.stocks[sym], t = TICKERS[sym];
-        const delta = (st.price / st.dayOpen - 1) * 100;
-        const cls = st.halted > 0 ? "halt" : delta >= 0 ? "up" : "down";
-        const dTxt = st.halted > 0 ? "⛔" : `${delta >= 0 ? "+" : "−"}${Math.abs(delta).toFixed(1).replace(".", ",")} %`;
-        const pnl = st.shares * (st.price - st.dayOpen);
         return `
-        <div class="stock-card" data-sym="${sym}" style="animation-delay:${Object.keys(TICKERS).indexOf(sym) * 45}ms">
+        <div class="stock-card" data-sym="${sym}" style="animation-delay:${i * 45}ms">
           <div class="sc-top">
             <img class="sc-icon" src="assets/stocks/${sym.toLowerCase()}.png" alt="">
             <div class="sc-name">
               <b>${t.name}</b>
-              <span class="sc-pos">${st.shares > 0
-                ? `Vous : ${st.shares} actions · ${fmt(st.shares * st.price)}`
-                : t.desc}</span>
+              <span class="sc-pos" data-pos></span>
             </div>
             <div class="sc-right">
-              <div class="sc-delta ${cls}">${dTxt}</div>
-              <div class="sc-price">${st.price.toFixed(2).replace(".", ",")} ₣</div>
+              <div class="sc-delta" data-delta></div>
+              <div class="sc-price" data-price></div>
             </div>
           </div>
           <div class="sc-bottom">
             <canvas class="sc-spark" data-spark="${sym}" width="184" height="56"></canvas>
             <span class="div-chip">Div ${(t.div * 100).toFixed(1).replace(".", ",")} %/j</span>
-            ${st.shares > 0 && Math.abs(pnl) >= 1
-              ? `<span class="sc-pnl ${pnl >= 0 ? "up" : "down"}">${pnl >= 0 ? "+" : "−"}${fmt(Math.abs(pnl))} auj.</span>`
-              : ""}
+            <span class="sc-pnl" data-pnl></span>
           </div>
           ${expandedSym === sym ? `
           <div class="sc-detail">
@@ -972,11 +956,8 @@ function renderPanel() {
         trade(expandedSym, parseInt(b.dataset.trade, 10));
       }));
 
-    drawIndexChart();
-    c.querySelectorAll(".sc-spark").forEach((cv) => {
-      const st = S.stocks[cv.dataset.spark];
-      drawSpark(cv, st.hist.slice(-30).concat(st.price));
-    });
+    refreshBourseTexts();
+    startBourseLive();
   }
 
   else if (panelTab === "journal") {
@@ -1080,12 +1061,93 @@ function drawSpark(cv, data) {
   ctx.stroke();
 }
 
+// mise à jour chirurgicale des textes de la Bourse (aucun re-rendu du DOM)
+function refreshBourseTexts() {
+  const c = $("#panel-content");
+  if (panelTab !== "bourse") return;
+  const H = Math.floor(S.gameMs / HOUR), hod = (9 + H) % 24;
+  const open = marketOpen();
+  const chip = c.querySelector("#bourse-chip");
+  if (chip) {
+    chip.textContent = open ? `🕐 Clôture dans ${18 - hod} h`
+      : isWeekend() ? "🕐 Week-end — fermé"
+      : hod < 9 ? "🕐 Ouverture à 9h" : "🕐 Fermé — demain 9h";
+  }
+  const idx = indexValue();
+  const d = S.indexDayOpen > 0 ? (idx / S.indexDayOpen - 1) * 100 : 0;
+  const iv = c.querySelector("#idx-val");
+  if (iv) iv.textContent = Math.round(idx).toLocaleString("fr-FR") + " pts";
+  const idl = c.querySelector("#idx-delta");
+  if (idl) {
+    idl.textContent = `${d >= 0 ? "↗ +" : "↘ "}${Math.abs(d).toFixed(1).replace(".", ",")} %`;
+    idl.className = "index-delta " + (d >= 0 ? "up" : "down");
+  }
+  const evc = c.querySelector("#bourse-event");
+  if (evc) {
+    const html = S.eventNow ? `<div class="event-banner">🚨 ${S.eventNow.head}</div>` : "";
+    if (evc.innerHTML !== html) evc.innerHTML = html;
+  }
+  for (const sym in TICKERS) {
+    const card = c.querySelector(`.stock-card[data-sym="${sym}"]`);
+    if (!card) continue;
+    const st = S.stocks[sym];
+    const delta = (st.price / st.dayOpen - 1) * 100;
+    const cls = st.halted > 0 ? "halt" : delta >= 0 ? "up" : "down";
+    const de = card.querySelector("[data-delta]");
+    de.textContent = st.halted > 0 ? "⛔" : `${delta >= 0 ? "+" : "−"}${Math.abs(delta).toFixed(1).replace(".", ",")} %`;
+    de.className = "sc-delta " + cls;
+    card.querySelector("[data-price]").textContent = st.price.toFixed(2).replace(".", ",") + " ₣";
+    card.querySelector("[data-pos]").textContent = st.shares > 0
+      ? `Vous : ${st.shares} actions · ${fmt(st.shares * st.price)}`
+      : TICKERS[sym].desc;
+    const pnl = st.shares * (st.price - st.dayOpen);
+    const pe = card.querySelector("[data-pnl]");
+    if (st.shares > 0 && Math.abs(pnl) >= 1) {
+      pe.textContent = `${pnl >= 0 ? "+" : "−"}${fmt(Math.abs(pnl))} auj.`;
+      pe.className = "sc-pnl " + (pnl >= 0 ? "up" : "down");
+    } else {
+      pe.textContent = "";
+    }
+  }
+}
+
+// animation continue : le graphique « morphe » en douceur vers chaque
+// nouveau point, 60 images/seconde, sans jamais reconstruire la page
+let liveRaf = null, liveDisp = null, liveFrame = 0;
+function startBourseLive() {
+  stopBourseLive();
+  liveDisp = null;
+  liveFrame = 0;
+  const loop = () => {
+    if (panelTab !== "bourse" || $("#panel").hidden) { liveRaf = null; return; }
+    const target = S.indexHist.slice(-60).concat(indexValue());
+    if (!liveDisp) liveDisp = target.slice();
+    while (liveDisp.length < target.length) liveDisp.push(liveDisp[liveDisp.length - 1] ?? target[target.length - 1]);
+    while (liveDisp.length > target.length) liveDisp.shift();
+    for (let i = 0; i < target.length; i++) liveDisp[i] += (target[i] - liveDisp[i]) * 0.09;
+    drawIndexChart(liveDisp);
+    if (liveFrame++ % 10 === 0) {
+      refreshBourseTexts();
+      document.querySelectorAll(".sc-spark").forEach((cv) => {
+        const st = S.stocks[cv.dataset.spark];
+        if (st) drawSpark(cv, st.hist.slice(-30).concat(st.price));
+      });
+    }
+    liveRaf = requestAnimationFrame(loop);
+  };
+  liveRaf = requestAnimationFrame(loop);
+}
+function stopBourseLive() {
+  if (liveRaf) cancelAnimationFrame(liveRaf);
+  liveRaf = null;
+}
+
 // le grand graphique de l'indice — dégradé lumineux et point doré (maquettes H1/H2)
-function drawIndexChart() {
+function drawIndexChart(dataIn) {
   const cv = document.getElementById("index-chart");
   if (!cv) return;
   const ctx = cv.getContext("2d");
-  let data = S.indexHist.slice(-48).concat(indexValue());
+  let data = dataIn || S.indexHist.slice(-48).concat(indexValue());
   if (data.length < 2) data = [data[0] || 35_420, data[0] || 35_420];
   const min = Math.min(...data), max = Math.max(...data);
   const range = (max - min) || max * 0.01 || 1;
@@ -1130,16 +1192,20 @@ function drawIndexChart() {
   ctx.stroke();
   ctx.shadowBlur = 0;
 
-  // point final doré avec halo
+  // point final doré avec halo qui pulse
+  const tPulse = Date.now() / 1000;
   const lx = X(data.length - 1), ly = Y(data[data.length - 1]);
-  ctx.fillStyle = "rgba(233,192,92,0.3)";
-  ctx.beginPath(); ctx.arc(lx, ly, 14, 0, 7); ctx.fill();
+  ctx.fillStyle = `rgba(233,192,92,${0.22 + 0.14 * Math.sin(tPulse * 3)})`;
+  ctx.beginPath(); ctx.arc(lx, ly, 13 + 3 * Math.sin(tPulse * 3), 0, 7); ctx.fill();
   ctx.fillStyle = "#E9C05C";
   ctx.beginPath(); ctx.arc(lx, ly, 6, 0, 7); ctx.fill();
 }
 
+let panelJustOpened = false;
 function openPanel(tab) {
+  stopBourseLive();
   panelTab = tab;
+  panelJustOpened = true;
   $("#panel").hidden = false;
   $("#coach").hidden = true;
   if (tab === "journal") { S.journalRead = S.journal.length; save(); updateBadges(); }
@@ -1147,6 +1213,7 @@ function openPanel(tab) {
   renderPanel();
 }
 function closePanel() {
+  stopBourseLive();
   $("#panel").hidden = true;
   panelTab = null;
   setTab("carte");
