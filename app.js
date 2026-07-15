@@ -41,11 +41,16 @@ const HOUR = 3_600_000, DAY = 24 * HOUR;
 
 // Les rivaux : quatre magnats IA, chacun son style, sa cadence, ses cibles
 const NPCS = {
-  betonneur:   { name: "Jean-Mi Bétonneur",   firstDay: 5,  every: 4, prefs: ["commerce", "restaurant"], quote: "Le village a besoin de renouveau." },
-  vieilargent: { name: "Gérard Vieilargent",  firstDay: 7,  every: 5, prefs: ["culture", "artisanat"],   quote: "Le patrimoine ne se discute pas, il s'achète." },
-  kevin:       { name: "Kevin de StartupBro", firstDay: 9,  every: 5, prefs: ["cafe", "bar"],            quote: "On va pivoter ce village en hub." },
-  baronne:     { name: "La Baronne",          firstDay: 12, every: 6, prefs: ["restaurant", "sport"],    quote: "Tout ceci manquait cruellement de standing." },
+  betonneur:   { name: "Jean-Mi Bétonneur",   firstDay: 2, every: 4, prefs: ["commerce", "restaurant"], quote: "Le village a besoin de renouveau.",
+                 arrival: "a été aperçu chez le notaire avec un carnet de chèques" },
+  vieilargent: { name: "Gérard Vieilargent",  firstDay: 4, every: 5, prefs: ["culture", "artisanat"],   quote: "Le patrimoine ne se discute pas, il s'achète.",
+                 arrival: "fait le tour des moulins en berline de collection" },
+  kevin:       { name: "Kevin de StartupBro", firstDay: 6, every: 5, prefs: ["cafe", "bar"],            quote: "On va pivoter ce village en hub.",
+                 arrival: "a demandé le débit de la fibre au café" },
+  baronne:     { name: "La Baronne",          firstDay: 8, every: 6, prefs: ["restaurant", "sport"],    quote: "Tout ceci manquait cruellement de standing.",
+                 arrival: "a fait livrer douze malles à l'hôtel particulier" },
 };
+const NPC_MAX_PROPS = 4;
 const npcOf = (id) => S.npcOwners[id] || null;
 const npcName = (id) => (NPCS[npcOf(id)] ? NPCS[npcOf(id)].name : "un rival");
 
@@ -62,7 +67,7 @@ const TITLES = [
 
 // Défis du jour (3 par jour, récompenses réelles — plus de rente magique)
 const QUEST_DEFS = {
-  collect: { label: "Encaisser 5 loyers", target: 5, reward: 150 },
+  collect: { label: "Encaisser 3 loyers", target: 3, reward: 150 },
   tournee: { label: "Faire la tournée d'un bien (sur place)", target: 1, reward: 150 },
   bourse:  { label: "Passer un ordre en Bourse", target: 1, reward: 150 },
   invest:  { label: "Acheter ou améliorer un bien", target: 1, reward: 200 },
@@ -122,6 +127,7 @@ function freshState() {
     npc: [],           // hérité (v0.6) — migré vers npcOwners
     npcOwners: {},     // placeId -> clé du rival
     npcLast: {},       // clé du rival -> dernier jour d'achat
+    npcAnnounced: {},  // rivaux déjà annoncés dans le journal
     tips: {},          // conseils déjà montrés
     lastNpcDay: 0,
     lastChargesDay: 0,
@@ -371,15 +377,17 @@ function collect(p) {
 }
 
 function collectAll() {
-  let total = 0;
+  let total = 0, n = 0;
   for (const id in S.owned) {
     const a = accrued(byId[id]);
-    if (a >= 1) { total += a; S.owned[id].lastCollect = S.gameMs; refreshMarker(byId[id]); }
+    if (a >= 1) { total += a; n += 1; S.owned[id].lastCollect = S.gameMs; }
   }
   if (total >= 1) {
     S.cash += total;
+    bumpStreak();
+    for (let i = 0; i < n; i++) questBump("collect");
     toast(`🪙 Loyers encaissés : +${fmt(total)}`, "gain");
-    updateHUD(); save();
+    refreshAllMarkers(); updateHUD(); save();
   }
 }
 
@@ -549,8 +557,16 @@ function npcTick() {
   const d = gameDay();
   for (const key in NPCS) {
     const n = NPCS[key];
-    if (d < Math.max(n.firstDay, ECO.npcGraceD)) continue;
+    // annonce dans le journal la veille de son premier achat
+    if (d >= n.firstDay - 1 && !S.npcAnnounced[key]) {
+      S.npcAnnounced[key] = true;
+      journal(`On murmure que <b>${n.name}</b> ${n.arrival}. Le village retient son souffle.`);
+      toast(`👀 ${n.name} rôde dans le village…`);
+    }
+    if (d < n.firstDay) continue;
     if (d - (S.npcLast[key] ?? 0) < n.every) continue;
+    const holdings = Object.values(S.npcOwners).filter((k) => k === key).length;
+    if (holdings >= NPC_MAX_PROPS) continue;
     S.npcLast[key] = d;
 
     let free = PLACES.filter((p) => !S.owned[p.id] && !npcOf(p.id));
