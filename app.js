@@ -38,7 +38,16 @@ const CAT_META = {
 };
 
 const HOUR = 3_600_000, DAY = 24 * HOUR;
-const NPC_NAME = "Jean-Mi Bétonneur";
+
+// Les rivaux : quatre magnats IA, chacun son style, sa cadence, ses cibles
+const NPCS = {
+  betonneur:   { name: "Jean-Mi Bétonneur",   firstDay: 5,  every: 4, prefs: ["commerce", "restaurant"], quote: "Le village a besoin de renouveau." },
+  vieilargent: { name: "Gérard Vieilargent",  firstDay: 7,  every: 5, prefs: ["culture", "artisanat"],   quote: "Le patrimoine ne se discute pas, il s'achète." },
+  kevin:       { name: "Kevin de StartupBro", firstDay: 9,  every: 5, prefs: ["cafe", "bar"],            quote: "On va pivoter ce village en hub." },
+  baronne:     { name: "La Baronne",          firstDay: 12, every: 6, prefs: ["restaurant", "sport"],    quote: "Tout ceci manquait cruellement de standing." },
+};
+const npcOf = (id) => S.npcOwners[id] || null;
+const npcName = (id) => (NPCS[npcOf(id)] ? NPCS[npcOf(id)].name : "un rival");
 
 // Titres de progression (satire oblige)
 const TITLES = [
@@ -101,7 +110,10 @@ function freshState() {
     gameMs: 0,
     startDow: new Date().getDay(),
     owned: {},
-    npc: [],
+    npc: [],           // hérité (v0.6) — migré vers npcOwners
+    npcOwners: {},     // placeId -> clé du rival
+    npcLast: {},       // clé du rival -> dernier jour d'achat
+    tips: {},          // conseils déjà montrés
     lastNpcDay: 0,
     lastChargesDay: 0,
     lastQuestDay: -1,
@@ -132,6 +144,10 @@ function load() {
       const parsed = JSON.parse(raw);
       const st = Object.assign(freshState(), parsed);
       st.stocks = Object.assign(freshStocks(), parsed.stocks || {});
+      // migration v0.6 → v0.8 : l'ancien tableau npc devient npcOwners
+      if (Array.isArray(st.npc) && st.npc.length && !Object.keys(st.npcOwners).length) {
+        st.npc.forEach((id) => (st.npcOwners[id] = "betonneur"));
+      }
       return st;
     }
   } catch (e) { /* état neuf */ }
@@ -227,7 +243,7 @@ function monopolyTarget() {
     const mine = group.filter((p) => S.owned[p.id]).length;
     if (mine === 0 || mine === group.length) continue;
     const cost = group.filter((p) => !S.owned[p.id])
-      .reduce((a, p) => a + p.price * (S.npc.includes(p.id) ? ECO.flip : 1), 0);
+      .reduce((a, p) => a + priceToPay(p), 0);
     if (!best || cost < best.cost) best = { cat, mine, total: group.length, cost };
   }
   return best;
@@ -289,21 +305,29 @@ function checkTitle() {
 // ---------------------------------------------------------------------------
 // Actions immobilières
 // ---------------------------------------------------------------------------
-const priceToPay = (p) => (S.npc.includes(p.id) ? p.price * ECO.flip : p.price);
+const priceToPay = (p) => (npcOf(p.id) ? p.price * ECO.flip : p.price);
 const inRange = (p) => player && dist(player.lat, player.lon, p.lat, p.lon) <= ECO.radiusM;
 
 function buy(p) {
   const cost = priceToPay(p);
   if (S.cash < cost || S.owned[p.id]) return;
-  const fromNpc = S.npc.includes(p.id);
+  const fromNpc = npcOf(p.id);
   S.cash -= cost;
-  S.npc = S.npc.filter((id) => id !== p.id);
+  delete S.npcOwners[p.id];
   S.owned[p.id] = { level: 0, lastCollect: S.gameMs, inspectedUntil: S.gameMs + ECO.inspectDurH * HOUR };
   questBump("invest");
-  journal(fromNpc
-    ? `Vous avez arraché <b>${p.name}</b> à ${NPC_NAME} pour ${fmt(cost)}. Il boude.`
-    : `Acte notarié : <b>${p.name}</b> est à vous pour ${fmt(cost)}. Personne ne vous a rien demandé.`);
-  toast(fromNpc ? `😤 Repris à Bétonneur : ${p.name}` : `📜 ${p.name} est à vous !`);
+  if (fromNpc) {
+    const n = NPCS[fromNpc];
+    journal(`Vous avez arraché <b>${p.name}</b> à ${n.name} pour ${fmt(cost)}. Il claque la porte du notaire.`);
+    toast(`😤 Repris à ${n.name} : ${p.name}`);
+    // riposte : le rival vexé rachète plus vite
+    S.npcLast[fromNpc] = gameDay() - n.every;
+  } else {
+    journal(`Acte notarié : <b>${p.name}</b> est à vous pour ${fmt(cost)}. Personne ne vous a rien demandé.`);
+    toast(`📜 ${p.name} est à vous !`);
+  }
+  burst(p, 10);
+  tip("buy", "Votre bien produit des loyers en continu. Revenez encaisser la pièce 🪙 — l'accumulation se bloque après 8 h.");
   checkMonopolies(p.cat);
   refreshAllMarkers(); updateHUD(); openSheet(p, true); save();
 }
@@ -316,6 +340,7 @@ function collect(p) {
   flyCoin(p, `+${fmt(amount)}`);
   bumpStreak();
   questBump("collect");
+  tip("collect", "Passez voir votre bien SUR PLACE : la Tournée du proprio double son loyer pendant 24 h (×3 le week-end).");
   refreshMarker(p); updateHUD(); save();
   if (sheetPlace === p) openSheet(p, true);
 }
@@ -337,6 +362,7 @@ function inspect(p) {
   S.owned[p.id].inspectedUntil = S.gameMs + ECO.inspectDurH * HOUR;
   toast(`👔 Le proprio est passé — loyer ×${isWeekend() ? 3 : 2} pendant 24 h`);
   questBump("tournee");
+  tip("mono", "Visez le Monopole : possédez TOUS les commerces d'une catégorie du village et leurs loyers doublent pour toujours. La jauge en haut vous guide.");
   refreshMarker(p); openSheet(p, true); save();
 }
 
@@ -364,6 +390,7 @@ function checkMonopolies(cat) {
   if (!hasMonopoly(cat) || S.monopolies.includes(cat)) return;
   S.monopolies.push(cat);
   if (S.firstMonopolyDay < 0) S.firstMonopolyDay = gameDay();
+  PLACES.filter((p) => p.cat === cat).forEach((p) => burst(p, 14));
   const meta = CAT_META[cat];
   headline(`<b>LE MONOPOLE DES ${meta.plural.toUpperCase()} DE MOURIÈS EST À VOUS.</b>
     Les loyers de la catégorie doublent. Le prix de tout augmente mystérieusement.`);
@@ -445,6 +472,24 @@ function marketOpen() {
   return !isWeekend() && hod >= 9 && hod < 18;
 }
 
+// micro-ticks : pendant la séance, les cours frémissent toutes les ~8 s
+// réelles (le moteur horaire garde la main sur la tendance de fond)
+let lastMicroTick = 0;
+function microTick(now) {
+  if (now - lastMicroTick < 8000 || !marketOpen()) return;
+  lastMicroTick = now;
+  for (const sym in S.stocks) {
+    const st = S.stocks[sym], t = TICKERS[sym];
+    if (st.halted > 0) continue;
+    st.price *= 1 + gauss() * (t.vol / 20);
+    const r = st.price / st.dayOpen;
+    if (r > 1.15) st.price = st.dayOpen * 1.15;
+    if (r < 0.85) st.price = st.dayOpen * 0.85;
+  }
+  S.indexHist.push(Math.round(indexValue()));
+  if (S.indexHist.length > 120) S.indexHist.shift();
+}
+
 // indice global : moyenne de la cote, exprimée en points (base 35 420)
 function indexValue() {
   const syms = Object.keys(S.stocks);
@@ -476,24 +521,31 @@ function trade(sym, qty) {
 // ---------------------------------------------------------------------------
 function npcTick() {
   const d = gameDay();
-  if (d < ECO.npcGraceD || d - S.lastNpcDay < ECO.npcEveryD) return;
-  S.lastNpcDay = d;
+  for (const key in NPCS) {
+    const n = NPCS[key];
+    if (d < Math.max(n.firstDay, ECO.npcGraceD)) continue;
+    if (d - (S.npcLast[key] ?? 0) < n.every) continue;
+    S.npcLast[key] = d;
 
-  let free = PLACES.filter((p) => !S.owned[p.id] && !S.npc.includes(p.id));
-  const target = monopolyTarget();
-  if (d < 21 && target) free = free.filter((p) => p.cat !== target.cat);
-  if (d < 30) {
-    free = free.filter((p) => {
-      const others = PLACES.filter((q) => q.cat === p.cat && q.id !== p.id);
-      return !(others.length >= 1 && others.every((q) => S.owned[q.id]));
-    });
+    let free = PLACES.filter((p) => !S.owned[p.id] && !npcOf(p.id));
+    const target = monopolyTarget();
+    if (d < 21 && target) free = free.filter((p) => p.cat !== target.cat);
+    if (d < 30) {
+      free = free.filter((p) => {
+        const others = PLACES.filter((q) => q.cat === p.cat && q.id !== p.id);
+        return !(others.length >= 1 && others.every((q) => S.owned[q.id]));
+      });
+    }
+    if (!free.length) continue;
+    const pref = free.filter((p) => n.prefs.includes(p.cat));
+    const pool = pref.length ? pref : free;
+    const p = pool[Math.floor(Math.random() * pool.length)];
+    S.npcOwners[p.id] = key;
+    journal(`${n.name} a racheté <b>${p.name}</b>. « ${n.quote} »`);
+    toast(`🏗️ ${n.name} a acheté ${p.name}`);
+    tip("rival", "Les rivaux achètent le village. Vous pouvez racheter leurs biens (prix ×1,5) — surtout s'ils bloquent un de vos monopoles.");
+    refreshAllMarkers(); save();
   }
-  if (!free.length) return;
-  const p = free[Math.floor(Math.random() * free.length)];
-  S.npc.push(p.id);
-  journal(`${NPC_NAME} a racheté <b>${p.name}</b>. « Le village a besoin de renouveau », dit-il.`);
-  toast(`🏗️ ${NPC_NAME} a acheté ${p.name}`);
-  refreshMarker(p); save();
 }
 
 // ---------------------------------------------------------------------------
@@ -517,6 +569,7 @@ function tick() {
     S.lastChargesDay = d;
   }
   stockTick();
+  microTick(now);
   npcTick();
   applyThemeByClock();
 
@@ -537,9 +590,27 @@ setInterval(tick, 1000);
 // ---------------------------------------------------------------------------
 const $ = (s) => document.querySelector(s);
 
+// le patrimoine « compte » vers sa nouvelle valeur au lieu de sauter
+let worthShown = null;
+function animateWorth(to) {
+  const el = $("#worth");
+  if (worthShown === null || Math.abs(to - worthShown) < 2) {
+    worthShown = to; el.textContent = fmt(to); return;
+  }
+  const from = worthShown;
+  worthShown = to;
+  const t0 = performance.now();
+  const step = (tn) => {
+    const k = Math.min(1, (tn - t0) / 500);
+    el.textContent = fmt(from + (to - from) * (1 - Math.pow(1 - k, 3)));
+    if (k < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
 function updateHUD() {
   const worth = netWorth();
-  $("#worth").textContent = fmt(worth);
+  animateWorth(worth);
   $("#cash").textContent = fmt(S.cash);
   // variation du jour, comme sur la maquette H3 (« ↗ +2,4 % »)
   const delta = S.dayWorth > 0 ? (worth / S.dayWorth - 1) * 100 : 0;
@@ -632,6 +703,34 @@ function updateCoach() {
 }
 $("#coach").addEventListener("click", () => { if (coachAction) coachAction(); });
 
+// conseil contextuel — montré une seule fois par clé
+function tip(key, text) {
+  if (S.tips[key]) return;
+  S.tips[key] = true; save();
+  const el = document.createElement("div");
+  el.className = "toast tip";
+  el.textContent = "💡 " + text;
+  $("#toasts").appendChild(el);
+  setTimeout(() => el.remove(), 8000);
+}
+
+// explosion de pièces (achat, monopole)
+function burst(p, n = 9) {
+  if (!map) return;
+  const px = map.project([p.lon, p.lat]);
+  for (let i = 0; i < n; i++) {
+    const el = document.createElement("div");
+    el.className = "burst-p";
+    el.textContent = ["🪙", "✨", "💸"][i % 3];
+    el.style.left = px.x + "px";
+    el.style.top = px.y + "px";
+    el.style.setProperty("--dx", Math.cos((i / n) * 6.283) * (40 + Math.random() * 45) + "px");
+    el.style.setProperty("--dy", Math.sin((i / n) * 6.283) * (32 + Math.random() * 32) - 46 + "px");
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 950);
+  }
+}
+
 let toastCount = 0;
 function toast(text, cls = "") {
   if (toastCount > 4) return; // anti-spam en temps accéléré
@@ -702,7 +801,7 @@ function openSheet(p, silent = false) {
         : `<button class="btn ghost" id="a-goto">🚶 S'y rendre</button>`}
         ${nextCost != null ? `
         <button class="btn gold" id="a-upgrade" ${S.cash >= nextCost ? "" : "disabled"}>
-          🏗️ ${ECO.upNames[o.level]} — ${fmt(nextCost)}</button>` : ""}
+          🏗️ ${ECO.upNames[o.level]} · loyer ×${ECO.upMult[o.level]} — ${fmt(nextCost)}</button>` : ""}
       </div>`;
     $("#a-collect")?.addEventListener("click", () => collect(p));
     $("#a-inspect")?.addEventListener("click", () => inspect(p));
@@ -712,13 +811,13 @@ function openSheet(p, silent = false) {
       '<div class="hint">👔 La tournée : passez voir votre bien sur place et son loyer double pendant 24 h. C\'est votre raison de sortir marcher.</div>');
   } else {
     const cost = priceToPay(p);
-    const npcOwned = S.npc.includes(p.id);
+    const npcOwned = npcOf(p.id);
     const afford = S.cash >= cost;
     body.innerHTML = `
       <div class="sheet-row">
         <div class="stat">Prix <b>${fmt(cost)}</b>${npcOwned ? " (rachat ×1,5)" : ""}</div>
         <div class="stat">Rapportera <b>${fmt(p.price * ECO.rentDay)}</b>/jour</div>
-        ${npcOwned ? `<div class="stat">🏗️ <b>${NPC_NAME}</b></div>` : ""}
+        ${npcOwned ? `<div class="stat">🏗️ <b>${npcName(p.id)}</b></div>` : ""}
       </div>
       <div class="btn-row">
         ${!near ? '<button class="btn ghost" id="a-goto">🚶 S\'y rendre</button>' : ""}
@@ -743,6 +842,19 @@ $("#quest-chip").addEventListener("click", () => {
   setTab("empire");
   openPanel("empire");
 });
+$("#help-chip").addEventListener("click", () => openPanel("aide"));
+
+// respiration de la carte : pièces qui flottent, anneaux qui pulsent
+setInterval(() => {
+  if (!map) return;
+  const t = Date.now() / 1000;
+  try {
+    if (map.getLayer("place-coin"))
+      map.setPaintProperty("place-coin", "icon-translate", [0, Math.sin(t * 2.6) * 4]);
+    if (map.getLayer("place-ring"))
+      map.setPaintProperty("place-ring", "circle-stroke-opacity", 0.62 + 0.28 * Math.sin(t * 2));
+  } catch (e) {}
+}, 150);
 
 // ---------------------------------------------------------------------------
 // Panneaux : Bourse / Journal / Empire
@@ -784,7 +896,7 @@ function renderPanel() {
         const dTxt = st.halted > 0 ? "⛔" : `${delta >= 0 ? "+" : "−"}${Math.abs(delta).toFixed(1).replace(".", ",")} %`;
         const pnl = st.shares * (st.price - st.dayOpen);
         return `
-        <div class="stock-card" data-sym="${sym}">
+        <div class="stock-card" data-sym="${sym}" style="animation-delay:${Object.keys(TICKERS).indexOf(sym) * 45}ms">
           <div class="sc-top">
             <img class="sc-icon" src="assets/stocks/${sym.toLowerCase()}.png" alt="">
             <div class="sc-name">
@@ -894,6 +1006,27 @@ function renderPanel() {
         openSheet(byId[row.dataset.id]);
       }));
   }
+
+  else if (panelTab === "aide") {
+    const steps = [
+      ["🏠", "Achetez les commerces autour de vous", "à moins de 300 m — ou touchez « S'y rendre » en mode balade."],
+      ["🪙", "Encaissez les loyers", "vos biens produisent en continu, mais l'accumulation se bloque après 8 h : revenez souvent."],
+      ["👔", "Faites la Tournée du proprio", "passez voir un bien sur place : son loyer double pendant 24 h (×3 le week-end)."],
+      ["👑", "Décrochez des Monopoles", "possédez TOUS les commerces d'une catégorie du village : loyers ×2 pour toujours."],
+      ["🏗️", "Améliorez vos biens", "Ravalement, Gentrification, Flagship : le loyer grimpe à chaque niveau."],
+      ["📈", "Spéculez à la Bourse", "séance 9h–18h, dividendes à la clôture, gros événement chaque lundi. Vos loyers financent vos actions."],
+      ["⚔️", "Surveillez les rivaux", "quatre magnats achètent le village. Rachetez leurs biens (×1,5) avant qu'ils ne bloquent vos monopoles."],
+      ["🎯", "Suivez le guide", "les Défis du jour paient, et la pastille en bas d'écran vous dit toujours la meilleure action."],
+    ];
+    c.innerHTML = `<h2>Comment jouer</h2>
+      <div class="panel-sub">La boucle de MAGNAT en huit gestes.</div>` +
+      steps.map(([icon, t, d]) => `
+        <div class="help-step">
+          <div class="hs-icon">${icon}</div>
+          <div><b>${t}</b><div class="hs-sub">${d}</div></div>
+        </div>`).join("") +
+      `<div class="proto-note">MAGNAT — République du Capital. Acte notarié fourni, scrupules non inclus.</div>`;
+  }
   $("#panel").scrollTop = scroll;
 }
 
@@ -981,6 +1114,7 @@ function openPanel(tab) {
   $("#panel").hidden = false;
   $("#coach").hidden = true;
   if (tab === "journal") { S.journalRead = S.journal.length; save(); updateBadges(); }
+  if (tab === "bourse") tip("bourse", "Achetez bas, vendez haut — et détenir paie : dividendes à chaque clôture de 18h. Gros événement chaque lundi matin.");
   renderPanel();
 }
 function closePanel() {
@@ -1208,7 +1342,7 @@ function placesGeoJSON() {
     type: "FeatureCollection",
     features: PLACES.map((p) => {
       const o = S.owned[p.id];
-      const npc = S.npc.includes(p.id);
+      const npc = npcOf(p.id);
       const state = o ? "owned" : npc ? "npc" : S.cash >= priceToPay(p) ? "afford" : "far";
       let tag;
       if (o) {

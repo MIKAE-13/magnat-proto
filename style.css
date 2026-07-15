@@ -605,3 +605,61 @@ body.night .stock-card {
   .sc-icon { width: 40px; height: 40px; }
   .sc-spark { width: 74px; }
 }
+
+/* ---------- Vie & animations ---------- */
+.player-dot { animation: player-pulse 2s ease-in-out infinite; }
+@keyframes player-pulse {
+  0%, 100% { box-shadow: 0 0 0 6px rgba(46, 124, 246, 0.25), 0 2px 8px rgba(0,0,0,0.35); }
+  50%      { box-shadow: 0 0 0 13px rgba(46, 124, 246, 0.10), 0 2px 8px rgba(0,0,0,0.35); }
+}
+.btn { transition: transform 0.1s; }
+.btn:active:not(:disabled) { transform: scale(0.96); }
+.tab { transition: transform 0.1s; }
+.tab:active { transform: scale(0.92); }
+
+.burst-p {
+  position: fixed;
+  z-index: 60;
+  font-size: 19px;
+  pointer-events: none;
+  animation: burst-fly 0.9s ease-out forwards;
+}
+@keyframes burst-fly {
+  0%   { transform: translate(0, 0) scale(0.6); opacity: 1; }
+  100% { transform: translate(var(--dx), var(--dy)) scale(1.1); opacity: 0; }
+}
+
+.stock-card { animation: card-in 0.35s ease-out both; }
+@keyframes card-in {
+  from { transform: translateY(14px); opacity: 0; }
+}
+.toast.tip {
+  background: var(--gold);
+  color: #fff;
+  border-radius: 14px;
+  max-width: 88vw;
+  white-space: normal;
+  text-align: center;
+  line-height: 1.35;
+}
+
+/* ---------- Aide ---------- */
+#help-chip {
+  pointer-events: auto;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink-soft);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px; font-weight: 800;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+}
+.help-step {
+  display: flex; gap: 12px; align-items: flex-start;
+  padding: 11px 2px;
+  border-bottom: 1px solid var(--line);
+  font-size: 14.5px;
+}
+.help-step .hs-icon { font-size: 22px; width: 30px; text-align: center; }
+.help-step .hs-sub { color: var(--ink-soft); font-size: 13px; margin-top: 1px; }
