@@ -79,32 +79,16 @@ const ENCOUNTER_TYPES = {
 const npcOf = (id) => S.npcOwners[id] || null;
 const npcName = (id) => (NPCS[npcOf(id)] ? NPCS[npcOf(id)].name : "un rival");
 
-// Le vestiaire : préréglages du personnage 3D
+// Le vestiaire : personnages générés (les premium s'achètent à la Boutique)
 const AVATARS = {
   loup:       { name: "Le Jeune Loup" },
   magnate:    { name: "La Magnate" },
   heritier:   { name: "L'Héritier" },
   baroudeuse: { name: "La Baroudeuse" },
-};
-
-// Traits personnalisables du personnage
-const CUSTO = {
-  skin:  { label: "Teint",          colors: ["#F5D0A9", "#E8B98F", "#C68B59", "#8D5A3A", "#5C3A21"] },
-  hair:  { label: "Coiffure",       styles: { court: "Court", bob: "Bob", queue: "Queue", chauve: "Rasé" } },
-  hairColor: { label: "Cheveux",    colors: ["#1B1B1B", "#3B2A1E", "#7A4A22", "#C9902A", "#B5B5B5", "#C9494B"] },
-  eyes:  { label: "Yeux",           colors: ["#2E2E2E", "#3B6CD4", "#2E8B57", "#7A4A22", "#7B5EC6"] },
-  top:   { label: "Haut",           styles: { suit: "Costume", polo: "Polo", vent: "Coupe-vent" } },
-  topColor: { label: "Couleur haut", colors: ["#0E9B62", "#22262E", "#C9902A", "#B23A48", "#2E6CD4", "#F3EEDF"] },
-  pants: { label: "Pantalon",       colors: ["#22262E", "#8A7355", "#3E4C63", "#EDE6D2"] },
-  shoes: { label: "Chaussures",     colors: ["#5B4632", "#1E1E1E", "#F5F1E6"] },
-  acc:   { label: "Accessoire",     styles: { rien: "Aucun", lunettes: "Lunettes", monocle: "Monocle", chapeau: "Chapeau" } },
-};
-
-const PRESETS = {
-  loup:       { skin: "#E8B98F", hair: "court",  hairColor: "#1B1B1B", eyes: "#2E2E2E", top: "suit", topColor: "#0E9B62", pants: "#22262E", shoes: "#5B4632", acc: "lunettes" },
-  magnate:    { skin: "#F5D0A9", hair: "bob",    hairColor: "#3B2A1E", eyes: "#3B6CD4", top: "suit", topColor: "#F3EEDF", pants: "#EDE6D2", shoes: "#1E1E1E", acc: "monocle" },
-  heritier:   { skin: "#F5D0A9", hair: "court",  hairColor: "#C9902A", eyes: "#2E8B57", top: "polo", topColor: "#B23A48", pants: "#8A7355", shoes: "#5B4632", acc: "rien" },
-  baroudeuse: { skin: "#C68B59", hair: "queue",  hairColor: "#7A4A22", eyes: "#7A4A22", top: "vent", topColor: "#0E9B62", pants: "#3E4C63", shoes: "#F5F1E6", acc: "chapeau" },
+  banquier:   { name: "Le Banquier",  price: 2500 },
+  artiste:    { name: "L'Artiste",    price: 2500 },
+  golfeuse:   { name: "La Golfeuse",  price: 2500 },
+  rentier:    { name: "Le Rentier",   price: 4000 },
 };
 
 // Titres de progression (satire oblige)
@@ -193,8 +177,8 @@ function freshState() {
     walk: { total: 0, day: -1, todayKm: 0, credited: 0 },
     deals: [],         // les « œufs » : dossiers qui se bouclent en km
     dealDay: -1,
-    avatar: "loup",    // préréglage courant
-    custom: { ...PRESETS.loup },
+    avatar: "loup",    // personnage porté
+    wardrobe: ["loup", "magnate", "heritier", "baroudeuse"],
     xp: 0,
     level: 1,
     items: { cafe: 2, croissant: 2 },  // consommables de négociation
@@ -244,7 +228,6 @@ function load() {
       }
       // les rencontres sont éphémères : on repart propre à chaque session
       st.spawns = [];
-      if (!parsed.custom) st.custom = { ...(PRESETS[parsed.avatar] || PRESETS.loup) };
       // migration cote v2 : chaque action a désormais son prix de base —
       // les positions existantes sont soldées au cours (aucune perte)
       if (!parsed.coteV2) {
@@ -551,6 +534,20 @@ function scout(p) {
   sfx("coin");
   toast(`🔍 Repérage : +${fmt(gain)} · dossier −${Math.round(S.discounts[p.id] * 100)} % sur ${p.name}`, "gain");
   updateHUD(); openSheet(p, true); save();
+}
+
+function sellPlace(p) {
+  if (!S.owned[p.id]) return;
+  const gain = Math.round(placeValue(p) * 0.7);
+  delete S.owned[p.id];
+  S.monopolies = S.monopolies.filter((c) => c !== p.cat);
+  S.cash += gain;
+  sfx("coin");
+  burst(p, 6);
+  journal(`Vous cédez <b>${p.name}</b> pour ${fmt(gain)}. Le village jase, le notaire encaisse.`);
+  $("#sheet").hidden = true;
+  sheetPlace = null;
+  refreshAllMarkers(); updateHUD(); updateCoach(); save();
 }
 
 function goTo(p) {
@@ -1480,6 +1477,26 @@ function openSheet(p, silent = false) {
     $("#a-goto")?.addEventListener("click", () => goTo(p));
     if (!near) body.insertAdjacentHTML("beforeend",
       '<div class="hint">👔 La tournée : passez voir votre bien sur place et son loyer double pendant 24 h. C\'est votre raison de sortir marcher.</div>');
+    // revente : 70 % de la valeur, avec confirmation en deux temps
+    body.insertAdjacentHTML("beforeend",
+      `<div class="btn-row"><button class="btn ghost sell-ghost" id="a-sell">💸 Revendre — ${fmt(placeValue(p) * 0.7)}</button></div>`);
+    const sellBtn = $("#a-sell");
+    let armed = false;
+    sellBtn.addEventListener("click", () => {
+      if (!armed) {
+        armed = true;
+        sellBtn.textContent = "⚠️ Confirmer la vente ?";
+        sellBtn.classList.add("armed");
+        setTimeout(() => {
+          if (!sellBtn.isConnected) return;
+          armed = false;
+          sellBtn.textContent = `💸 Revendre — ${fmt(placeValue(p) * 0.7)}`;
+          sellBtn.classList.remove("armed");
+        }, 3000);
+      } else {
+        sellPlace(p);
+      }
+    });
   } else {
     const cost = priceToPay(p);
     const npcOwned = npcOf(p.id);
@@ -1707,43 +1724,80 @@ function renderPanel() {
 
   else if (panelTab === "perso") {
     c.innerHTML = `<h2>Votre personnage</h2>
-      <div class="panel-sub">100 % 3D — il marche, il tourne, et il est à votre image.</div>
-      <canvas id="perso-preview" width="300" height="380"></canvas>
-      <div class="cust-group"><div class="cust-label">Préréglages</div>
-        <div class="cust-row">${Object.keys(AVATARS).map((k) =>
-          `<button class="style-btn" data-preset="${k}">${AVATARS[k].name}</button>`).join("")}</div>
-      </div>
-      ${Object.keys(CUSTO).map((trait) => {
-        const def = CUSTO[trait];
-        if (def.colors) {
-          return `<div class="cust-group"><div class="cust-label">${def.label}</div>
-            <div class="cust-row">${def.colors.map((col) =>
-              `<button class="swatch ${S.custom[trait] === col ? "on" : ""}" data-trait="${trait}" data-val="${col}" style="background:${col}"></button>`).join("")}</div></div>`;
-        }
-        return `<div class="cust-group"><div class="cust-label">${def.label}</div>
-          <div class="cust-row">${Object.keys(def.styles).map((sk) =>
-            `<button class="style-btn ${S.custom[trait] === sk ? "on" : ""}" data-trait="${trait}" data-val="${sk}">${def.styles[sk]}</button>`).join("")}</div></div>`;
-      }).join("")}`;
-
-    disposePreview();
-    if (window.THREE) {
-      try {
-        charPreview = makeCharScene(document.getElementById("perso-preview"), 300, 380, 4.1);
-        setCharConfig(charPreview, S.custom);
-      } catch (e) { charPreview = null; }
-    }
-    const refreshSel = () => {
-      c.querySelectorAll("[data-trait]").forEach((x) =>
-        x.classList.toggle("on", S.custom[x.dataset.trait] === x.dataset.val));
-    };
-    c.querySelectorAll("[data-trait]").forEach((b) =>
+      <div class="panel-sub">Choisissez votre allure. Les tenues 🔒 s'achètent ici ou à la Boutique.</div>
+      <div class="ward-grid">${Object.keys(AVATARS).map((k) => {
+        const a = AVATARS[k];
+        const owned = !a.price || S.wardrobe.includes(k);
+        return `<button class="ward-card ${S.avatar === k ? "on" : ""} ${owned ? "" : "locked"}" data-ward="${k}">
+          <img src="assets/avatars/${k}.png" alt="${a.name}">
+          <b>${a.name}</b>
+          ${S.avatar === k ? '<span class="ward-tag">✓ Porté</span>'
+            : owned ? '<span class="ward-tag ghost">Choisir</span>'
+            : `<span class="ward-tag gold">🔒 ${fmt(a.price)}</span>`}
+        </button>`;
+      }).join("")}</div>`;
+    c.querySelectorAll("[data-ward]").forEach((b) =>
       b.addEventListener("click", () => {
-        S.custom[b.dataset.trait] = b.dataset.val;
-        applyCustom(); save(); sfx("coin");
-        refreshSel();
+        const k = b.dataset.ward, a = AVATARS[k];
+        if (a.price && !S.wardrobe.includes(k)) {
+          if (S.cash >= a.price) buyAvatar(k);
+          else notice(`Il vous manque ${fmt(a.price - S.cash)} pour « ${a.name} »`);
+        } else {
+          setAvatar(k);
+        }
+        renderPanel();
       }));
-    c.querySelectorAll("[data-preset]").forEach((b) =>
-      b.addEventListener("click", () => { setAvatar(b.dataset.preset); refreshSel(); }));
+  }
+
+  else if (panelTab === "boutique") {
+    c.innerHTML = `<h2>La Boutique</h2>
+      <div class="panel-sub">Tout s'achète — c'est un peu le concept. 💵 <b>${fmt(S.cash)}</b> disponibles.</div>
+      <div class="cust-label" style="margin-bottom:8px">CONSOMMABLES DE NÉGOCIATION</div>
+      <button class="shop-card" data-shop="cafe">
+        <span class="shop-ic">☕</span>
+        <span class="shop-info"><b>Café serré</b><span class="shop-desc">Ralentit la jauge d'une manche · vous en avez ×${S.items.cafe || 0}</span></span>
+        <span class="shop-price">150 ₣</span>
+      </button>
+      <button class="shop-card" data-shop="croissant">
+        <span class="shop-ic">🥐</span>
+        <span class="shop-info"><b>Croissant</b><span class="shop-desc">Élargit la zone d'accord · vous en avez ×${S.items.croissant || 0}</span></span>
+        <span class="shop-price">150 ₣</span>
+      </button>
+      <button class="shop-card" data-shop="pack">
+        <span class="shop-ic">🧺</span>
+        <span class="shop-info"><b>Panier du Négociateur</b><span class="shop-desc">4 cafés + 4 croissants — l'arsenal complet</span></span>
+        <span class="shop-price">990 ₣</span>
+      </button>
+      <div class="cust-label" style="margin:16px 0 8px">LE VESTIAIRE PREMIUM</div>
+      <div class="ward-grid">${Object.keys(AVATARS).filter((k) => AVATARS[k].price).map((k) => {
+        const a = AVATARS[k];
+        const owned = S.wardrobe.includes(k);
+        return `<button class="ward-card ${owned ? "" : "locked"}" data-buyward="${k}">
+          <img src="assets/avatars/${k}.png" alt="${a.name}">
+          <b>${a.name}</b>
+          ${owned ? '<span class="ward-tag">✓ Acquis</span>' : `<span class="ward-tag gold">${fmt(a.price)}</span>`}
+        </button>`;
+      }).join("")}</div>
+      <div class="proto-note">Les ₣ ne s'achètent pas avec de vrais euros. Jamais. Règle de la maison —<br>on est des rentiers, pas des monstres.</div>`;
+    c.querySelectorAll("[data-shop]").forEach((b) =>
+      b.addEventListener("click", () => {
+        const kind = b.dataset.shop;
+        const cost = kind === "pack" ? 990 : 150;
+        if (S.cash < cost) { notice(`Il vous manque ${fmt(cost - S.cash)}`); return; }
+        S.cash -= cost;
+        if (kind === "pack") { S.items.cafe += 4; S.items.croissant += 4; }
+        else S.items[kind] += 1;
+        sfx("buy");
+        updateHUD(); save(); renderPanel();
+      }));
+    c.querySelectorAll("[data-buyward]").forEach((b) =>
+      b.addEventListener("click", () => {
+        const k = b.dataset.buyward;
+        if (S.wardrobe.includes(k)) { openPanel("perso"); return; }
+        if (S.cash < AVATARS[k].price) { notice(`Il vous manque ${fmt(AVATARS[k].price - S.cash)}`); return; }
+        buyAvatar(k);
+        renderPanel();
+      }));
   }
 
   else if (panelTab === "aide") {
@@ -1955,17 +2009,9 @@ function drawIndexChart(dataIn) {
   ctx.beginPath(); ctx.arc(lx, ly, 6, 0, 7); ctx.fill();
 }
 
-function disposePreview() {
-  if (charPreview) {
-    try { charPreview.renderer.dispose(); } catch (e) {}
-    charPreview = null;
-  }
-}
-
 let panelJustOpened = false;
 function openPanel(tab) {
   stopBourseLive();
-  if (tab !== "perso") disposePreview();
   panelTab = tab;
   panelJustOpened = true;
   $("#panel").hidden = false;
@@ -1976,7 +2022,6 @@ function openPanel(tab) {
 }
 function closePanel() {
   stopBourseLive();
-  disposePreview();
   $("#panel").hidden = true;
   panelTab = null;
   setTab("carte");
@@ -2100,182 +2145,6 @@ async function addGameLayers() {
 }
 
 // ---------------------------------------------------------------------------
-// Le personnage 3D (Three.js) : procédural, personnalisable, animé
-// ---------------------------------------------------------------------------
-let charMain = null;     // { renderer, scene, cam, char }
-let charPreview = null;
-let walkingUntil = 0;
-
-function mesh(geo, color) {
-  return new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color }));
-}
-function boxM(w, h, d, color) { return mesh(new THREE.BoxGeometry(w, h, d), color); }
-
-// construit le personnage à partir des traits choisis
-function buildCharacter(cfg) {
-  const g = new THREE.Group();
-  const limbs = {};
-
-  // jambes (pivot à la hanche pour l'animation de marche)
-  for (const side of [-1, 1]) {
-    const hip = new THREE.Group();
-    hip.position.set(side * 0.13, 0.72, 0);
-    const leg = boxM(0.17, 0.52, 0.2, cfg.pants);
-    leg.position.y = -0.26;
-    const foot = boxM(0.19, 0.1, 0.3, cfg.shoes);
-    foot.position.set(0, -0.55, 0.05);
-    hip.add(leg, foot);
-    g.add(hip);
-    limbs[side < 0 ? "legL" : "legR"] = hip;
-  }
-
-  // torse
-  const torso = boxM(0.52, 0.62, 0.3, cfg.topColor);
-  torso.position.y = 1.05;
-  g.add(torso);
-  if (cfg.top === "suit") {
-    const shirt = boxM(0.2, 0.5, 0.02, "#FFFFFF");
-    shirt.position.set(0, 1.08, 0.16);
-    const tie = boxM(0.07, 0.3, 0.02, "#B23A48");
-    tie.position.set(0, 1.05, 0.175);
-    g.add(shirt, tie);
-  } else if (cfg.top === "polo") {
-    const col = boxM(0.4, 0.08, 0.32, "#FFFFFF");
-    col.position.set(0, 1.33, 0);
-    g.add(col);
-  } else if (cfg.top === "vent") {
-    const zip = boxM(0.04, 0.55, 0.02, "#E9C05C");
-    zip.position.set(0, 1.05, 0.165);
-    g.add(zip);
-  }
-
-  // bras (pivot à l'épaule)
-  for (const side of [-1, 1]) {
-    const shoulder = new THREE.Group();
-    shoulder.position.set(side * 0.32, 1.3, 0);
-    const arm = boxM(0.13, 0.48, 0.16, cfg.topColor);
-    arm.position.y = -0.24;
-    const hand = boxM(0.12, 0.12, 0.14, cfg.skin);
-    hand.position.y = -0.52;
-    shoulder.add(arm, hand);
-    g.add(shoulder);
-    limbs[side < 0 ? "armL" : "armR"] = shoulder;
-  }
-
-  // tête
-  const head = mesh(new THREE.SphereGeometry(0.3, 20, 16), cfg.skin);
-  head.position.y = 1.72;
-  head.scale.set(1, 1.05, 0.95);
-  g.add(head);
-
-  // yeux (blanc + iris) tournés vers +Z
-  for (const side of [-1, 1]) {
-    const white = mesh(new THREE.SphereGeometry(0.055, 10, 8), "#FFFFFF");
-    white.position.set(side * 0.11, 1.76, 0.25);
-    const iris = mesh(new THREE.SphereGeometry(0.028, 8, 8), cfg.eyes);
-    iris.position.set(side * 0.11, 1.76, 0.295);
-    g.add(white, iris);
-  }
-  const mouth = boxM(0.1, 0.025, 0.02, "#8A5A4A");
-  mouth.position.set(0, 1.6, 0.28);
-  g.add(mouth);
-
-  // coiffures
-  if (cfg.hair !== "chauve") {
-    if (cfg.hair === "court") {
-      const cap = mesh(new THREE.SphereGeometry(0.315, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2.1), cfg.hairColor);
-      cap.position.y = 1.76;
-      g.add(cap);
-    } else if (cfg.hair === "bob") {
-      const cap = mesh(new THREE.SphereGeometry(0.34, 20, 14, 0, Math.PI * 2, 0, Math.PI / 1.55), cfg.hairColor);
-      cap.position.y = 1.75;
-      g.add(cap);
-    } else if (cfg.hair === "queue") {
-      const cap = mesh(new THREE.SphereGeometry(0.315, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2.1), cfg.hairColor);
-      cap.position.y = 1.76;
-      const tail = mesh(new THREE.CylinderGeometry(0.06, 0.03, 0.42, 8), cfg.hairColor);
-      tail.position.set(0, 1.62, -0.3);
-      tail.rotation.x = 0.5;
-      g.add(cap, tail);
-    }
-  }
-
-  // accessoires
-  if (cfg.acc === "lunettes") {
-    const glasses = boxM(0.34, 0.08, 0.03, "#1E1E1E");
-    glasses.position.set(0, 1.76, 0.27);
-    g.add(glasses);
-  } else if (cfg.acc === "monocle") {
-    const ring = mesh(new THREE.TorusGeometry(0.07, 0.012, 8, 20), "#C9902A");
-    ring.position.set(0.11, 1.76, 0.29);
-    g.add(ring);
-  } else if (cfg.acc === "chapeau") {
-    const brim = mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.03, 20), "#3B2A1E");
-    brim.position.y = 1.93;
-    const crown = mesh(new THREE.CylinderGeometry(0.24, 0.26, 0.22, 20), "#3B2A1E");
-    crown.position.y = 2.04;
-    const band = mesh(new THREE.CylinderGeometry(0.265, 0.265, 0.05, 20), "#E9C05C");
-    band.position.y = 1.98;
-    g.add(brim, crown, band);
-  }
-
-  g.userData.limbs = limbs;
-  return g;
-}
-
-function makeCharScene(canvas, w, h, camDist) {
-  const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
-  renderer.setSize(w, h, false);
-  const scene = new THREE.Scene();
-  scene.add(new THREE.AmbientLight(0xfff2df, 0.85));
-  const sun = new THREE.DirectionalLight(0xffffff, 0.9);
-  sun.position.set(1.4, 2.4, 2);
-  scene.add(sun);
-  const cam = new THREE.PerspectiveCamera(33, w / h, 0.1, 20);
-  cam.position.set(0, 1.75, camDist);
-  cam.lookAt(0, 1.0, 0);
-  const holder = new THREE.Group();
-  scene.add(holder);
-  return { renderer, scene, cam, holder, char: null };
-}
-
-function setCharConfig(ctx, cfg) {
-  if (!ctx) return;
-  if (ctx.char) ctx.holder.remove(ctx.char);
-  ctx.char = buildCharacter(cfg);
-  ctx.holder.add(ctx.char);
-}
-
-function animateChar(ctx, t, walking, spin) {
-  const L = ctx.char?.userData.limbs;
-  if (!L) return;
-  const a = walking ? Math.sin(t * 9) * 0.65 : 0;
-  L.legL.rotation.x = a;
-  L.legR.rotation.x = -a;
-  L.armL.rotation.x = -a * 0.8;
-  L.armR.rotation.x = a * 0.8;
-  ctx.char.position.y = walking ? Math.abs(Math.sin(t * 9)) * 0.06 : Math.sin(t * 2) * 0.015;
-  // face à la caméra de la carte : tourner la carte fait le tour du personnage
-  ctx.holder.rotation.y = spin != null ? spin : ((-(map?.getBearing?.() || 0)) * Math.PI) / 180;
-}
-
-function charLoop() {
-  const t = Date.now() / 1000;
-  try {
-    if (charMain) {
-      animateChar(charMain, t, Date.now() < walkingUntil);
-      charMain.renderer.render(charMain.scene, charMain.cam);
-    }
-    if (charPreview && panelTab === "perso" && !$("#panel").hidden) {
-      animateChar(charPreview, t, true, t * 0.7); // il marche et tourne en vitrine
-      charPreview.renderer.render(charPreview.scene, charPreview.cam);
-    }
-  } catch (e) {}
-  requestAnimationFrame(charLoop);
-}
-if (window.THREE) requestAnimationFrame(charLoop);
-
-// ---------------------------------------------------------------------------
 // Position du joueur (GPS ou balade)
 // ---------------------------------------------------------------------------
 let player = null;
@@ -2308,22 +2177,7 @@ function setPlayer(lat, lon, fly = false) {
   if (!playerMarker) {
     const el = document.createElement("div");
     el.className = "player-marker";
-    if (window.THREE) {
-      try {
-        const cv = document.createElement("canvas");
-        cv.className = "player-canvas";
-        cv.width = 120; cv.height = 150;
-        el.appendChild(cv);
-        charMain = makeCharScene(cv, 120, 150, 4.4);
-        setCharConfig(charMain, S.custom);
-      } catch (e) { charMain = null; }
-    }
-    if (!charMain) {
-      el.innerHTML = `<img class="player-avatar" src="assets/avatars/${S.avatar}.png" alt="">`;
-    }
-    const ring = document.createElement("div");
-    ring.className = "player-ring";
-    el.appendChild(ring);
+    el.innerHTML = `<img class="player-avatar" src="assets/avatars/${S.avatar}.png" alt=""><div class="player-ring"></div>`;
     playerMarker = new maplibregl.Marker({ element: el, anchor: "bottom" })
       .setLngLat([lon, lat]).addTo(map);
   } else {
@@ -2331,7 +2185,6 @@ function setPlayer(lat, lon, fly = false) {
   }
   // le personnage marche quelques secondes après chaque déplacement
   if (movedNow) {
-    walkingUntil = Date.now() + 2000;
     const el = playerMarker.getElement();
     el.classList.add("walking");
     clearTimeout(walkAnimTimer);
@@ -2352,19 +2205,25 @@ $("#btn-recenter").addEventListener("click", () => {
 });
 
 function setAvatar(key) {
-  if (!AVATARS[key]) return;
+  const a = AVATARS[key];
+  if (!a) return;
+  if (a.price && !S.wardrobe.includes(key)) return; // pas encore acheté
   S.avatar = key;
-  S.custom = { ...PRESETS[key] };
-  applyCustom();
+  const img = playerMarker?.getElement()?.querySelector(".player-avatar");
+  if (img) img.src = `assets/avatars/${key}.png`;
   sfx("quest");
   save();
 }
 
-function applyCustom() {
-  if (charMain) setCharConfig(charMain, S.custom);
-  if (charPreview) setCharConfig(charPreview, S.custom);
-  const img = playerMarker?.getElement()?.querySelector(".player-avatar");
-  if (img) img.src = `assets/avatars/${S.avatar}.png`;
+function buyAvatar(key) {
+  const a = AVATARS[key];
+  if (!a || !a.price || S.wardrobe.includes(key) || S.cash < a.price) return;
+  S.cash -= a.price;
+  S.wardrobe.push(key);
+  sfx("buy");
+  journal(`Nouvelle allure : « <b>${a.name}</b> » rejoint votre vestiaire pour ${fmt(a.price)}.`);
+  setAvatar(key);
+  updateHUD(); save();
 }
 
 function startGPS() {
