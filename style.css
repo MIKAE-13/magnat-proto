@@ -763,3 +763,11 @@ body.night #mg-cursor { background: #fff; }
   font-size: 13px; font-weight: 700;
   cursor: pointer;
 }
+
+/* personnage 3D du mini-jeu */
+#mg-img {
+  height: 130px; width: auto; max-width: 200px;
+  object-fit: contain;
+  filter: drop-shadow(0 8px 10px rgba(0,0,0,0.25));
+  animation: coin-bob 1.8s ease-in-out infinite;
+}

@@ -53,26 +53,27 @@ const NPCS = {
 const NPC_MAX_PROPS = 4;
 
 // Les Rencontres de rue : le « Pokémon » de MAGNAT (mini-jeu de Négociation)
+// Communs = faciles, petits enjeux ± · Rares = difficiles, gros enjeux ±
 const ENCOUNTER_TYPES = {
   valise: {
-    emoji: "💼", name: "La Valise oubliée", weight: 0.35,
-    desc: "Un attaché-case abandonné sur un banc. Personne ne regarde.",
-    zone: 0.28, speed: 3.2,
+    emoji: "💼", name: "La Valise oubliée", weight: 0.45, rarity: "commune",
+    desc: "Un attaché-case abandonné sur un banc. Personne ne regarde… sauf son propriétaire, peut-être.",
+    zone: 0.30, speed: 3.0,
   },
   client: {
-    emoji: "🧐", name: "Le Client Mystère", weight: 0.30,
-    desc: "Il inspecte la vitrine, carnet en main. Son avis vaut de l'or.",
-    zone: 0.22, speed: 3.6,
-  },
-  informateur: {
-    emoji: "🕵️", name: "L'Informateur", weight: 0.20,
-    desc: "Imperméable, journal troué. « J'ai un tuyau. Ça vous intéresse ? »",
-    zone: 0.16, speed: 4.2,
+    emoji: "🧐", name: "Le Client Mystère", weight: 0.30, rarity: "commune",
+    desc: "Il inspecte la vitrine, carnet en main. Son avis peut tout changer — dans les deux sens.",
+    zone: 0.24, speed: 3.4,
   },
   inspecteur: {
-    emoji: "👮", name: "L'Inspecteur des Impôts", weight: 0.15,
+    emoji: "👮", name: "L'Inspecteur des Impôts", weight: 0.17, rarity: "peu commune",
     desc: "Il vous a repéré. Négociez bien — ou payez.",
-    zone: 0.20, speed: 4.0,
+    zone: 0.19, speed: 3.9,
+  },
+  informateur: {
+    emoji: "🕵️", name: "L'Informateur", weight: 0.08, rarity: "RARE",
+    desc: "Imperméable, journal troué. « Un tuyau en or. Mais si vous me vexez, la rumeur sortira quand même… »",
+    zone: 0.13, speed: 4.5,
   },
 };
 const npcOf = (id) => S.npcOwners[id] || null;
@@ -276,7 +277,8 @@ function rentMult(p) {
   }
   if (hasMonopoly(p.cat)) m *= ECO.monoMult;
   if (S.gameMs < S.rentRushUntil) m *= 2;
-  if (S.gameMs < (o.boostUntil || 0)) m *= 3; // avis 5 étoiles du Client Mystère
+  if (S.gameMs < (o.boostUntil || 0)) m *= 3;   // avis 5 étoiles du Client Mystère
+  if (S.gameMs < (o.malusUntil || 0)) m *= 0.5; // avis assassin
   return m;
 }
 
@@ -670,37 +672,53 @@ function pickEncounterType() {
   return "valise";
 }
 
-// les rencontres apparaissent AUTOUR DU JOUEUR, plus denses près des lieux
-function ensureSpawns() {
-  if (!player) return;
-  const before = S.spawns.length;
-  S.spawns = S.spawns.filter((s) => s.expires > S.gameMs);
-  let changed = S.spawns.length !== before;
-  while (S.spawns.length < SPAWN_TARGET) {
-    const type = pickEncounterType();
-    const nearPois = PLACES.filter((p) => dist(player.lat, player.lon, p.lat, p.lon) < 350);
-    let baseLat, baseLon, placeId = null, r, ang = Math.random() * 6.283;
-    // le Client Mystère vit devant un commerce ; les autres : 60 % près d'un
-    // lieu, 40 % au hasard autour du joueur
-    if ((type === "client" || Math.random() < 0.6) && nearPois.length) {
-      const anchor = nearPois[Math.floor(Math.random() * nearPois.length)];
-      baseLat = anchor.lat; baseLon = anchor.lon;
-      placeId = anchor.id;
-      r = 15 + Math.random() * 50;
-    } else {
-      baseLat = player.lat; baseLon = player.lon;
-      r = 70 + Math.random() * 190;
-    }
-    S.spawns.push({
-      id: "s" + (++S.spawnSeq),
-      type, placeId,
-      lat: baseLat + (r / 111320) * Math.sin(ang),
-      lon: baseLon + (r / (111320 * Math.cos((baseLat * Math.PI) / 180))) * Math.cos(ang),
-      expires: S.gameMs + (40 + Math.random() * 40) * 60_000,
-    });
-    changed = true;
+// L'algorithme d'apparition (à la Niantic) : les rencontres arrivent par
+// vagues aléatoires — PAS de remplacement instantané. Toutes les 30 s réelles,
+// un tirage décide d'une apparition (bonus si le joueur a marché, garantie
+// « pity » si rien depuis 6 min). Durée de vie courte : 2 à 4 minutes RÉELLES
+// (l'accélérateur de test n'y change rien) — l'urgence fait la rencontre.
+let lastSpawnRoll = 0;
+let lastRollPos = null;
+let lastSpawnAt = Date.now() - 5.5 * 60_000; // première rencontre sous ~1 min
+
+function spawnOne() {
+  const type = pickEncounterType();
+  const nearPois = PLACES.filter((p) => dist(player.lat, player.lon, p.lat, p.lon) < 350);
+  let baseLat, baseLon, placeId = null, r, ang = Math.random() * 6.283;
+  if ((type === "client" || Math.random() < 0.6) && nearPois.length) {
+    const anchor = nearPois[Math.floor(Math.random() * nearPois.length)];
+    baseLat = anchor.lat; baseLon = anchor.lon;
+    placeId = anchor.id;
+    r = 15 + Math.random() * 50;
+  } else {
+    baseLat = player.lat; baseLon = player.lon;
+    r = 70 + Math.random() * 190;
   }
-  if (changed) updateSpawnSource();
+  S.spawns.push({
+    id: "s" + (++S.spawnSeq),
+    type, placeId,
+    lat: baseLat + (r / 111320) * Math.sin(ang),
+    lon: baseLon + (r / (111320 * Math.cos((baseLat * Math.PI) / 180))) * Math.cos(ang),
+    exp: Date.now() + (120 + Math.random() * 120) * 1000,
+  });
+  updateSpawnSource();
+  toast(`${ENCOUNTER_TYPES[type].emoji} Une rencontre est apparue près de vous !`);
+}
+
+function spawnAlgorithm(now) {
+  const before = S.spawns.length;
+  S.spawns = S.spawns.filter((s) => (s.exp || 0) > now);
+  if (S.spawns.length !== before) updateSpawnSource();
+  if (!player || now - lastSpawnRoll < 30_000) return;
+  lastSpawnRoll = now;
+  if (S.spawns.length >= 2) return;
+  const moved = lastRollPos ? dist(player.lat, player.lon, lastRollPos.lat, lastRollPos.lon) : 0;
+  lastRollPos = { lat: player.lat, lon: player.lon };
+  let p = 0.20 + (moved > 80 ? 0.40 : 0);       // marcher attire les rencontres
+  if (now - lastSpawnAt > 6 * 60_000) p = 1;    // pity : jamais bredouille > 6 min
+  if (Math.random() > p) return;
+  spawnOne();
+  lastSpawnAt = now;
 }
 
 function spawnsGeoJSON() {
@@ -748,15 +766,26 @@ function resolveEncounter(s, success) {
   const t = TICKERS[sym];
 
   if (s.type === "valise") {
-    const magot = Math.round((150 + Math.random() * 450) / 10) * 10;
-    const gain = success ? magot : Math.round(magot / 2 / 10) * 10;
-    S.cash += gain;
-    sfx(success ? "buy" : "coin");
-    toast(success ? `💼 La valise est à vous : +${fmt(gain)}` : `💨 La moitié s'envole au vent : +${fmt(gain)}`, "gain");
+    if (success) {
+      const gain = Math.round((100 + Math.random() * 150) / 10) * 10;
+      S.cash += gain;
+      sfx("buy");
+      toast(`💼 La valise est à vous : +${fmt(gain)}`, "gain");
+    } else {
+      const perte = Math.min(S.cash, Math.round((50 + Math.random() * 50) / 10) * 10);
+      S.cash -= perte;
+      toast(`😬 Le propriétaire revient furieux — dédommagement : −${fmt(perte)}`);
+    }
   } else if (s.type === "client") {
     const p = s.placeId && byId[s.placeId];
     if (!success) {
-      toast("🧐 Le Client Mystère publie un avis assassin. Passons.");
+      if (p && S.owned[p.id]) {
+        S.owned[p.id].malusUntil = S.gameMs + 6 * HOUR;
+        toast(`💔 Avis assassin — loyer de ${p.name} ×0,5 pendant 6 h`);
+        journal(`Le Client Mystère étrille <b>${p.name}</b> : « service glacial, addition brûlante ». Loyer divisé par deux 6 h.`);
+      } else {
+        toast("🧐 Le Client Mystère tourne les talons. Rien perdu, rien gagné.");
+      }
     } else if (p && S.owned[p.id]) {
       S.owned[p.id].boostUntil = S.gameMs + 6 * HOUR;
       sfx("quest");
@@ -773,15 +802,18 @@ function resolveEncounter(s, success) {
     }
   } else if (s.type === "informateur") {
     if (success) {
-      const pct = 0.01 + Math.random() * 0.02;
+      const pct = 0.02 + Math.random() * 0.02;
       applyShock(sym, pct);
       sfx("mono");
       headline(`<b>TUYAU EN OR.</b> ${t.name} bondit de +${(pct * 100).toFixed(1).replace(".", ",")} % sur une rumeur bien informée.`);
       journal(`L'Informateur avait raison : <b>${t.name}</b> +${(pct * 100).toFixed(1).replace(".", ",")} %.`);
     } else {
-      applyShock(sym, -0.01);
-      toast(`🕵️ La rumeur se retourne — ${t.name} −1,0 %`);
-      journal(`Le tuyau de l'Informateur était percé : <b>${t.name}</b> −1 %.`);
+      const pct = 0.015 + Math.random() * 0.005;
+      const frais = Math.min(S.cash, 200);
+      S.cash -= frais;
+      applyShock(sym, -pct);
+      toast(`🕵️ Tuyau percé : −${fmt(frais)}, et ${t.name} −${(pct * 100).toFixed(1).replace(".", ",")} %`);
+      journal(`Le tuyau de l'Informateur était percé : <b>${t.name}</b> −${(pct * 100).toFixed(1).replace(".", ",")} % — et il a gardé l'avance.`);
     }
   } else if (s.type === "inspecteur") {
     if (success) {
@@ -806,7 +838,13 @@ let mgSpawn = null, mgRaf = null, mgPos = 0, mgZone = { c: 0.5, w: 0.2 };
 function startMinigame(s) {
   mgSpawn = s;
   const T = ENCOUNTER_TYPES[s.type];
-  $("#mg-emoji").textContent = T.emoji;
+  const img = $("#mg-img");
+  const fallback = $("#mg-emoji");
+  img.style.display = "";
+  fallback.style.display = "none";
+  img.onerror = () => { img.style.display = "none"; fallback.style.display = ""; };
+  img.src = `assets/char-${s.type}.png`;
+  fallback.textContent = T.emoji;
   $("#mg-title").textContent = T.name;
   $("#mg-desc").textContent = T.desc;
   mgZone = { c: 0.3 + Math.random() * 0.4, w: T.zone };
@@ -867,7 +905,7 @@ function tick() {
 
   if (now - lastUiRefresh > 2500) {
     lastUiRefresh = now;
-    ensureSpawns();
+    spawnAlgorithm(now);
     refreshAllMarkers();
     updateHUD();
     if (sheetPlace) openSheet(sheetPlace, true);
@@ -1770,9 +1808,18 @@ function coinImage() {
 }
 
 // certaines catégories ont une 2e variante de bâtiment (anti-répétition)
-const VARIANT_CATS = ["commerce", "artisanat", "restaurant", "boulangerie", "culture"];
-const sprName = (p) =>
-  p.cat + (VARIANT_CATS.includes(p.cat) && parseInt(p.id.slice(1), 10) % 2 ? "-b" : "");
+const VARIANT_CATS = ["commerce", "artisanat", "restaurant", "boulangerie"];
+const EXTRA_SPRITES = ["culture-b", "culture-lib"];
+function sprName(p) {
+  if (p.cat === "culture") {
+    // la mairie garde son drapeau, la médiathèque ses livres,
+    // les ruines sont réservées aux vrais sites archéologiques
+    if (p.sub === "townhall") return "culture";
+    if (p.sub === "library") return "culture-lib";
+    return "culture-b";
+  }
+  return p.cat + (VARIANT_CATS.includes(p.cat) && parseInt(p.id.slice(1), 10) % 2 ? "-b" : "");
+}
 
 async function loadSprites() {
   await Promise.all(Object.keys(CAT_META).map(async (cat) => {
@@ -1787,18 +1834,22 @@ async function loadSprites() {
     } catch (e) { nightSprites = false; }
   }));
   // variantes optionnelles (absentes = retombe sur le sprite de base)
-  await Promise.all(VARIANT_CATS.flatMap((cat) => [
-    map.loadImage(`assets/${cat}-b.png`)
-      .then((r) => { if (!map.hasImage(`d-${cat}-b`)) map.addImage(`d-${cat}-b`, r.data); })
+  const extras = VARIANT_CATS.map((c) => c + "-b").concat(EXTRA_SPRITES);
+  await Promise.all(extras.flatMap((name) => [
+    map.loadImage(`assets/${name}.png`)
+      .then((r) => { if (!map.hasImage(`d-${name}`)) map.addImage(`d-${name}`, r.data); })
       .catch(() => {}),
-    map.loadImage(`assets/${cat}-b-night.png`)
-      .then((r) => { if (!map.hasImage(`n-${cat}-b`)) map.addImage(`n-${cat}-b`, r.data); })
+    map.loadImage(`assets/${name}-night.png`)
+      .then((r) => { if (!map.hasImage(`n-${name}`)) map.addImage(`n-${name}`, r.data); })
       .catch(() => {}),
   ]));
   if (!map.hasImage("coin")) map.addImage("coin", coinImage());
-  for (const k in ENCOUNTER_TYPES) {
-    if (!map.hasImage("sp-" + k)) map.addImage("sp-" + k, encounterIcon(ENCOUNTER_TYPES[k].emoji));
-  }
+  // personnages 3D des rencontres (fallback : pastille emoji)
+  await Promise.all(Object.keys(ENCOUNTER_TYPES).map((k) =>
+    map.loadImage(`assets/char-${k}.png`)
+      .then((r) => { if (!map.hasImage("sp-" + k)) map.addImage("sp-" + k, r.data); })
+      .catch(() => { if (!map.hasImage("sp-" + k)) map.addImage("sp-" + k, encounterIcon(ENCOUNTER_TYPES[k].emoji)); })
+  ));
   spritesReady = true;
 }
 
@@ -1894,7 +1945,8 @@ function buildPlaceLayers() {
       id: "spawn-icons", type: "symbol", source: "spawns",
       layout: {
         "icon-image": ["get", "icon"],
-        "icon-size": ["interpolate", ["linear"], ["zoom"], 14, 0.35, 16, 0.55, 18, 0.8],
+        "icon-size": ["interpolate", ["linear"], ["zoom"], 14, 0.16, 16, 0.30, 18, 0.46],
+        "icon-anchor": "bottom",
         "icon-allow-overlap": true,
         "icon-ignore-placement": true,
       },
