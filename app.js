@@ -140,11 +140,24 @@ const MARKET_EVENTS = [
 // ---------------------------------------------------------------------------
 const SAVE_KEY = "magnat-proto-v1";
 
+function seedIntra(sym, price) {
+  // pré-remplit la courbe : marche aléatoire à rebours, calée sur la
+  // volatilité de la valeur, qui aboutit exactement au cours actuel
+  const vol = TICKERS[sym].vol;
+  const pts = [price];
+  let p = price;
+  for (let i = 0; i < 70; i++) {
+    p = p / (1 + gauss() * (vol / 3));
+    pts.unshift(Math.round(p * 100) / 100);
+  }
+  return pts;
+}
+
 function freshStocks() {
   const st = {};
   for (const sym in TICKERS) {
     const b = TICKERS[sym].base;
-    st[sym] = { price: b, dayOpen: b, shares: 0, hist: [b], intra: [b], halted: 0 };
+    st[sym] = { price: b, dayOpen: b, shares: 0, hist: [b], intra: seedIntra(sym, b), halted: 0 };
   }
   return st;
 }
@@ -216,7 +229,8 @@ function load() {
       const st = Object.assign(freshState(), parsed);
       st.stocks = Object.assign(freshStocks(), parsed.stocks || {});
       for (const sym in st.stocks) {
-        if (!Array.isArray(st.stocks[sym].intra)) st.stocks[sym].intra = [st.stocks[sym].price];
+        const stk = st.stocks[sym];
+        if (!Array.isArray(stk.intra) || stk.intra.length < 10) stk.intra = seedIntra(sym, stk.price);
       }
       // migration v0.6 → v0.8 : l'ancien tableau npc devient npcOwners
       if (Array.isArray(st.npc) && st.npc.length && !Object.keys(st.npcOwners).length) {
@@ -1896,7 +1910,7 @@ function drawSpark(cv, data, openVal) {
   ctx.closePath();
   ctx.fill();
   ctx.strokeStyle = up ? (night ? "#5CE0A1" : "#0E9B62") : "#E2604C";
-  ctx.lineWidth = 3.5;
+  ctx.lineWidth = 2.5;
   ctx.lineJoin = "round";
   ctx.beginPath();
   data.forEach((v, i) => (i ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v))));
@@ -1988,8 +2002,8 @@ function startBourseLive() {
       document.querySelectorAll(".sc-chart").forEach((cv) => {
         const st = S.stocks[cv.dataset.spark];
         if (!st) return;
-        const base = st.intra && st.intra.length > 2 ? st.intra.slice(-90) : st.hist.slice(-30);
-        drawSpark(cv, base.concat(st.price), st.dayOpen);
+        const data = st.hist.slice(-15).concat(st.intra.slice(-70), st.price);
+        drawSpark(cv, data, st.dayOpen);
       });
     }
     if (liveFrame++ % 12 === 0) refreshBourseTexts();
