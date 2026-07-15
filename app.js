@@ -125,6 +125,13 @@ const TICKERS = {
   SBT: { name: "STARTUPBRO TECH",     icon: "🚀", base: 340, drift: 0.0012, vol: 0.055, div: 0,      desc: "La plus chère de la cote. Jamais rentable. Bonne chance." },
 };
 
+// chaque catégorie de terrain pèse sur SA valeur : acheter une boulangerie
+// quelque part en France pousse GLUTEN & FILS pour tout le monde
+const CAT_TICKER = {
+  cafe: "KWA", boulangerie: "GLU", bar: "HBL", restaurant: "FKT",
+  commerce: "CDD", culture: "CDV", artisanat: "CDV", sport: "VRT",
+};
+
 const MARKET_EVENTS = [
   { head: "GRÈVE DES TRANSPORTS — Transit National dévisse, les bars trinquent (dans le bon sens).", shocks: { TRN: -0.20, HBL: +0.06 } },
   { head: "CANICULE — Vertligne et Houblon s'envolent, plus personne ne boit de café chaud.",       shocks: { VRT: +0.15, HBL: +0.10, KWA: -0.08 } },
@@ -217,6 +224,9 @@ function freshState() {
     indexDayOpen: 35_420,
     muted: false,
     coteV2: true,
+    natDivHour: -1,  // dernière clôture nationale déjà payée en dividendes
+    natEvSeen: -1,   // dernier événement national déjà annoncé
+    natV1: false,
   };
 }
 
@@ -314,6 +324,130 @@ function dist(lat1, lon1, lat2, lon2) {
 }
 
 // ---------------------------------------------------------------------------
+// LA FRANCE ENTIÈRE : les lieux réels se découvrent en se déplaçant.
+// Dès qu'on explore une zone nouvelle, les commerces OpenStreetMap du
+// secteur rejoignent le jeu — prix DÉTERMINISTES (même prix pour tous
+// les joueurs, dérivés de l'identifiant OSM), donc cadastre partageable.
+// ---------------------------------------------------------------------------
+const BAKED_IDS = new Set(PLACES.map((p) => p.id)); // le village d'origine
+const POI_CACHE_KEY = "magnat-poi-v1";
+let poiCenters = [];
+let poiFetching = false;
+let poiLastTry = 0;
+
+function osmCat(tags) {
+  const a = tags.amenity, s = tags.shop, t = tags.tourism, l = tags.leisure, h = tags.historic;
+  if (a === "cafe") return "cafe";
+  if (a === "bar" || a === "pub" || a === "biergarten") return "bar";
+  if (a === "restaurant" || a === "fast_food" || a === "food_court") return "restaurant";
+  if (s === "bakery" || s === "pastry") return "boulangerie";
+  if (s === "wine" || tags.craft) return "artisanat";
+  if (a === "townhall" || a === "library" || a === "arts_centre" || a === "theatre" ||
+      a === "cinema" || t === "museum" || t === "attraction" || t === "gallery" || h) return "culture";
+  if (l === "sports_centre" || l === "stadium" || l === "fitness_centre" || l === "swimming_pool") return "sport";
+  if (s || a === "pharmacy" || a === "bank" || a === "post_office" || a === "marketplace") return "commerce";
+  return null;
+}
+
+const PRICE_RANGE = {
+  cafe: [26000, 42000], bar: [22000, 38000], boulangerie: [20000, 32000],
+  restaurant: [42000, 68000], commerce: [22000, 95000],
+  artisanat: [55000, 85000], culture: [40000, 90000], sport: [55000, 80000],
+};
+
+function poiPrice(id, cat) {
+  const [lo, hi] = PRICE_RANGE[cat];
+  const r = (natHash("prix|" + id) % 1000) / 1000;
+  return Math.round((lo + r * (hi - lo)) / 500) * 500;
+}
+
+function addPlaces(list) {
+  let added = 0;
+  for (const p of list) {
+    if (byId[p.id]) continue;
+    PLACES.push(p);
+    byId[p.id] = p;
+    added++;
+  }
+  if (added) refreshAllMarkers();
+  return added;
+}
+
+function savePoiCache() {
+  try {
+    const dyn = PLACES.filter((p) => !BAKED_IDS.has(p.id));
+    // jamais évincer un lieu possédé ou en collection de parchemins
+    const precious = dyn.filter((p) => S.owned[p.id] || S.frags[p.id]);
+    const others = dyn.filter((p) => !S.owned[p.id] && !S.frags[p.id]).slice(-(900 - precious.length));
+    localStorage.setItem(POI_CACHE_KEY, JSON.stringify({
+      centers: poiCenters.slice(-80), places: precious.concat(others),
+    }));
+  } catch (e) {}
+}
+// les lieux déjà découverts reviennent immédiatement au lancement
+try {
+  const cch = JSON.parse(localStorage.getItem(POI_CACHE_KEY) || "null");
+  if (cch) { poiCenters = cch.centers || []; addPlaces(cch.places || []); }
+} catch (e) {}
+
+async function discoverAround(lat, lon) {
+  const now = Date.now();
+  if (poiFetching || now - poiLastTry < 15_000) return;
+  if (poiCenters.some((c) => dist(lat, lon, c.lat, c.lon) < 900)) return;
+  poiFetching = true;
+  poiLastTry = now;
+  const around = `around:1300,${lat.toFixed(5)},${lon.toFixed(5)}`;
+  const q = `[out:json][timeout:12];(
+    nwr(${around})[amenity~"^(cafe|bar|pub|biergarten|restaurant|fast_food|food_court|pharmacy|bank|post_office|marketplace|townhall|library|arts_centre|theatre|cinema)$"][name];
+    nwr(${around})[shop][name];
+    nwr(${around})[tourism~"^(museum|attraction|gallery)$"][name];
+    nwr(${around})[historic~"^(castle|monument|archaeological_site|fort|tower|city_gate)$"][name];
+    nwr(${around})[leisure~"^(sports_centre|stadium|fitness_centre|swimming_pool)$"][name];
+    nwr(${around})[craft][name];
+  );out center 150;`;
+  const hosts = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+  ];
+  try {
+    let data = null;
+    for (const host of hosts) {
+      try {
+        const r = await fetch(host, {
+          method: "POST",
+          body: "data=" + encodeURIComponent(q),
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        });
+        if (r.ok) { data = await r.json(); break; }
+      } catch (e) {}
+    }
+    if (!data) return;
+    poiCenters.push({ lat, lon });
+    const fresh = [];
+    for (const el of data.elements || []) {
+      const tags = el.tags || {};
+      const cat = osmCat(tags);
+      const la = el.lat ?? el.center?.lat;
+      const lo2 = el.lon ?? el.center?.lon;
+      if (!cat || !tags.name || la == null || lo2 == null) continue;
+      const id = el.type[0] + el.id;
+      const sub = tags.shop || tags.amenity || tags.tourism || tags.leisure ||
+        (tags.craft ? "craft" : "") || (tags.historic ? "archaeological_site" : "") || "";
+      fresh.push({ id, name: tags.name.slice(0, 42), cat, sub, lat: la, lon: lo2, price: poiPrice(id, cat) });
+    }
+    const added = addPlaces(fresh);
+    savePoiCache();
+    if (added > 0) {
+      journal(`Votre notaire a répertorié <b>${added} affaire${added > 1 ? "s" : ""}</b> dans le secteur. Tout s'achète, partout.`);
+      tip("decouverte", "La France entière est à vendre : les vrais commerces apparaissent sur la carte en explorant — même prix pour tous les joueurs, cadastre commun.");
+      updateHUD();
+    }
+  } finally {
+    poiFetching = false;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Immobilier
 // ---------------------------------------------------------------------------
 function placeValue(p) {
@@ -322,9 +456,11 @@ function placeValue(p) {
   return p.price * (1 + invested);
 }
 
+// un monopole se GAGNE (tous les lieux d'une catégorie du quartier) puis se
+// GARDE — la découverte de nouveaux lieux ailleurs en France ne le casse pas.
+// Il ne se perd qu'en revendant un bien de la catégorie.
 function hasMonopoly(cat) {
-  const group = PLACES.filter((p) => p.cat === cat);
-  return group.length >= 2 && group.every((p) => S.owned[p.id]);
+  return S.monopolies.includes(cat);
 }
 
 function rentMult(p) {
@@ -356,14 +492,21 @@ function stockValue() {
 
 function netWorth() {
   let w = S.cash + stockValue();
-  for (const id in S.owned) w += placeValue(byId[id]) + accrued(byId[id]);
+  for (const id in S.owned) {
+    if (!byId[id]) continue;
+    w += placeValue(byId[id]) + accrued(byId[id]);
+  }
   return w;
 }
 
 function monopolyTarget() {
+  // le monopole se joue dans le QUARTIER où l'on se trouve (rayon 1,8 km)
+  const ref = player || { lat: CENTER[1], lon: CENTER[0] };
   let best = null;
   for (const cat in CAT_META) {
-    const group = PLACES.filter((p) => p.cat === cat);
+    if (S.monopolies.includes(cat)) continue;
+    const group = PLACES.filter((p) =>
+      p.cat === cat && dist(ref.lat, ref.lon, p.lat, p.lon) <= 1800);
     if (group.length < 2) continue;
     const mine = group.filter((p) => S.owned[p.id]).length;
     if (mine === 0 || mine === group.length) continue;
@@ -515,8 +658,9 @@ function buy(p) {
   burst(p, 10);
   sfx("buy");
   tip("buy", "Votre bien produit des loyers en continu. Revenez encaisser la pièce 🪙 — l'accumulation se bloque après 8 h.");
-  checkMonopolies(p.cat);
+  checkMonopolies(p.cat, p);
   pushProperty(p.id, "achat");
+  pushSignal(CAT_TICKER[p.cat], 0.002, "immo");
   refreshAllMarkers(); updateHUD(); openSheet(p, true); save();
 }
 
@@ -537,6 +681,7 @@ function collect(p) {
 function collectAll() {
   let total = 0, n = 0;
   for (const id in S.owned) {
+    if (!byId[id]) continue;
     const a = accrued(byId[id]);
     if (a >= 1) { total += a; n += 1; S.owned[id].lastCollect = S.gameMs; }
   }
@@ -594,6 +739,7 @@ function sellPlace(p) {
   burst(p, 6);
   journal(`Vous cédez <b>${p.name}</b> pour ${fmt(gain)}. Le village jase, le notaire encaisse.`);
   removeProperty(p.id);
+  pushSignal(CAT_TICKER[p.cat], -0.002, "immo");
   delete remoteProps[p.id];
   $("#sheet").hidden = true;
   sheetPlace = null;
@@ -607,123 +753,232 @@ function goTo(p) {
   openSheet(p, true);
 }
 
-function checkMonopolies(cat) {
-  if (!hasMonopoly(cat) || S.monopolies.includes(cat)) return;
+function checkMonopolies(cat, around) {
+  if (S.monopolies.includes(cat)) return;
+  // le quartier du bien qui vient d'être acquis : tous les lieux de la
+  // catégorie à moins de 1,5 km doivent être à vous (2 minimum)
+  const center = around || PLACES.find((p) => p.cat === cat && S.owned[p.id]);
+  if (!center) return;
+  const group = PLACES.filter((p) =>
+    p.cat === cat && dist(center.lat, center.lon, p.lat, p.lon) <= 1500);
+  if (group.length < 2 || !group.every((p) => S.owned[p.id])) return;
   S.monopolies.push(cat);
   if (S.firstMonopolyDay < 0) S.firstMonopolyDay = gameDay();
-  PLACES.filter((p) => p.cat === cat).forEach((p) => burst(p, 14));
+  group.forEach((p) => burst(p, 14));
   sfx("mono");
   addXp(150);
   const meta = CAT_META[cat];
-  headline(`<b>LE MONOPOLE DES ${meta.plural.toUpperCase()} DE MOURIÈS EST À VOUS.</b>
+  headline(`<b>LE MONOPOLE DES ${meta.plural.toUpperCase()} DU QUARTIER EST À VOUS.</b>
     Les loyers de la catégorie doublent. Le prix de tout augmente mystérieusement.`);
-  journal(`MONOPOLE — Mouriès n'a plus qu'un seul propriétaire de ${meta.plural} : vous. Loyers ×2.`);
+  journal(`MONOPOLE — le quartier n'a plus qu'un seul propriétaire de ${meta.plural} : vous. Loyers ×2.`);
   updateHUD();
 }
 
 // ---------------------------------------------------------------------------
-// Bourse : moteur (tick par heure de jeu, séance 9h–18h)
+// LA BOURSE NATIONALE : un seul marché pour toute la France, en temps RÉEL.
+// Tous les clients calculent la MÊME courbe (bruit déterministe seedé par
+// heure) ; l'activité réelle des joueurs — achats immobiliers, ordres,
+// tuyaux d'Informateur — arrive par la table stock_signals et infléchit
+// les cours pour tout le monde. Séance : 9h–18h en semaine, heure réelle.
 // ---------------------------------------------------------------------------
-// L'horloge du jeu démarre à 9h00 : hourOfDay(H) = (9 + H) % 24
-function stockTick() {
-  const H = Math.floor(S.gameMs / HOUR);
-  if (H <= S.stockHour) return;
-  let from = S.stockHour + 1;
-  if (H - from > 2400) from = H - 2400; // borne anti-rattrapage infini
-  let divTotal = 0;
+const BOURSE_EPOCH = new Date(2026, 5, 1, 9, 0, 0).getTime(); // lundi 1er juin 2026, 9h
 
-  for (let h = from; h <= H; h++) {
-    const hod = (9 + h) % 24;
-    const dayI = Math.floor((9 + h) / 24);
-    const dow = (S.startDow + dayI) % 7;
+// signaux agrégés des joueurs : {sym, pct, h} — remplis par le réseau
+let natSignalsRaw = [];
+let natDirty = true;
+let natLastHour = -1;
+
+function natHash(str) {
+  let x = 2166136261;
+  for (let i = 0; i < str.length; i++) { x ^= str.charCodeAt(i); x = Math.imul(x, 16777619); }
+  return x >>> 0;
+}
+// flottant [0,1) déterministe par clé : même valeur chez tous les joueurs
+function natRnd(key) {
+  let t = (natHash(key) + 0x6d2b79f5) >>> 0;
+  t = Math.imul(t ^ (t >>> 15), t | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+function natGaussK(key) {
+  const u = Math.max(natRnd(key + "|u"), 1e-9), v = natRnd(key + "|v");
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+const natHourNow = () => Math.floor((Date.now() - BOURSE_EPOCH) / HOUR);
+
+function natIndex(P) {
+  const syms = Object.keys(TICKERS);
+  return (syms.reduce((a, s) => a + P[s] / TICKERS[s].base, 0) / syms.length) * 35_420;
+}
+
+// rejoue toute la marche depuis l'origine (≈ quelques milliers d'itérations,
+// instantané) : anchors horaires, événements, clôtures, signaux joueurs
+function natWalk() {
+  const hNow = natHourNow();
+  const sig = {};
+  for (const g of natSignalsRaw) {
+    const k = g.sym + "|" + g.h;
+    sig[k] = (sig[k] || 0) + g.pct;
+  }
+  const P = {}, dayOpen = {}, hist = {}, anchorsToday = {}, halted = {};
+  for (const sym in TICKERS) {
+    P[sym] = TICKERS[sym].base; dayOpen[sym] = TICKERS[sym].base;
+    hist[sym] = []; anchorsToday[sym] = []; halted[sym] = 0;
+  }
+  const idxAnchors = [];
+  const closes = [];
+  let ev = null, evStart = -1, idxDayOpen = 35_420;
+
+  for (let h = 0; h <= hNow; h++) {
+    const d = new Date(BOURSE_EPOCH + h * HOUR);
+    const hod = d.getHours(), dow = d.getDay();
     const we = dow === 0 || dow === 6;
-
-    // grands événements le lundi ET le jeudi à 10h (chocs étalés sur 2 jours)
-    if (hod === 10 && (dow === 1 || dow === 4) && !S.eventNow) {
-      const ev = MARKET_EVENTS[Math.floor(Math.random() * MARKET_EVENTS.length)];
-      const shocks = {};
-      for (const sym in ev.shocks) shocks[sym] = ev.shocks[sym] / 18;
-      S.eventNow = { head: ev.head, shocks, hoursLeft: 18 };
-      headline(`<b>${ev.head}</b>`);
-      journal(`BOURSE — ${ev.head}`);
-    }
-
-    // rumeur de mi-journée (~1 jour sur 2) : petit choc sur une valeur
-    if (hod === 13 && !we && !S.eventNow && Math.random() < 0.5) {
-      const syms = Object.keys(TICKERS);
-      const sym = syms[Math.floor(Math.random() * syms.length)];
-      const mag = (0.04 + Math.random() * 0.05) * (Math.random() < 0.5 ? -1 : 1);
-      S.eventNow = {
-        head: `RUMEUR — ${TICKERS[sym].name} : ${mag > 0 ? "un gros contrat se murmure en coulisses" : "des comptes qui toussent, dit-on"}.`,
-        shocks: { [sym]: mag / 3 },
-        hoursLeft: 3,
-      };
-      journal(`BOURSE — ${S.eventNow.head}`);
-    }
+    const dayKey = Math.floor((BOURSE_EPOCH + h * HOUR) / DAY);
 
     if (!we && hod === 9) {
-      for (const sym in S.stocks) S.stocks[sym].dayOpen = S.stocks[sym].price;
-      S.indexDayOpen = indexValue();
+      for (const sym in TICKERS) { dayOpen[sym] = P[sym]; anchorsToday[sym] = [P[sym]]; }
+      idxDayOpen = natIndex(P);
     }
-
+    // grands événements lundi ET jeudi à 10h — choisis par la graine du jour
+    if (!we && hod === 10 && (dow === 1 || dow === 4) && !ev) {
+      const base = MARKET_EVENTS[natHash("ev|" + dayKey) % MARKET_EVENTS.length];
+      const shocks = {};
+      for (const sym in base.shocks) shocks[sym] = base.shocks[sym] / 18;
+      ev = { head: base.head, shocks, hoursLeft: 18 };
+      evStart = h;
+    }
+    // rumeur de mi-journée (~1 jour sur 2), déterministe elle aussi
+    if (!we && hod === 13 && !ev && natRnd("rum|" + dayKey) < 0.5) {
+      const syms = Object.keys(TICKERS);
+      const sym = syms[natHash("rsym|" + dayKey) % syms.length];
+      const mag = (0.04 + natRnd("rmag|" + dayKey) * 0.05) * (natRnd("rdir|" + dayKey) < 0.5 ? -1 : 1);
+      ev = {
+        head: `RUMEUR — ${TICKERS[sym].name} : ${mag > 0 ? "un gros contrat se murmure en coulisses" : "des comptes qui toussent, dit-on"}.`,
+        shocks: { [sym]: mag / 3 }, hoursLeft: 3,
+      };
+      evStart = h;
+    }
     if (!we && hod >= 9 && hod < 18) {
-      for (const sym in S.stocks) {
-        const st = S.stocks[sym], t = TICKERS[sym];
-        if (st.halted > 0) continue;
-        let ret = t.drift / 9 + gauss() * (t.vol / 2.2) + (S.eventNow?.shocks[sym] || 0);
-        st.price *= 1 + ret;
-        st.intra.push(Math.round(st.price * 100) / 100);
-        if (st.intra.length > 120) st.intra.shift();
-        const r = st.price / st.dayOpen;
-        if (r > 1.15 || r < 0.85) {
-          st.price = st.dayOpen * (r > 1 ? 1.15 : 0.85);
-          st.halted = 1;
-          journal(`⛔ Cotation de <b>${t.name}</b> suspendue (±15 % en une séance). Restez calme, vendez tout.`);
-        }
+      for (const sym in TICKERS) {
+        const t = TICKERS[sym];
+        if (halted[sym] > 0) continue;
+        const push = Math.max(-0.03, Math.min(0.03, sig[sym + "|" + h] || 0));
+        P[sym] *= 1 + t.drift / 9 + natGaussK("t|" + sym + "|" + h) * (t.vol / 2.2)
+          + (ev?.shocks[sym] || 0) + push;
+        const r = P[sym] / dayOpen[sym];
+        if (r > 1.15 || r < 0.85) { P[sym] = dayOpen[sym] * (r > 1 ? 1.15 : 0.85); halted[sym] = 1; }
+        anchorsToday[sym].push(Math.round(P[sym] * 100) / 100);
       }
-      if (S.eventNow && --S.eventNow.hoursLeft <= 0) S.eventNow = null;
-      S.indexHist.push(Math.round(indexValue()));
-      if (S.indexHist.length > 96) S.indexHist.shift();
+      if (ev && --ev.hoursLeft <= 0) ev = null;
+      if (h > hNow - 130) idxAnchors.push(Math.round(natIndex(P)));
     }
-
     if (!we && hod === 18) {
-      for (const sym in S.stocks) {
-        const st = S.stocks[sym];
-        st.hist.push(Math.round(st.price * 100) / 100);
-        if (st.hist.length > 120) st.hist.shift();
-        divTotal += st.shares * st.price * TICKERS[sym].div * (S.level >= 40 ? 1.1 : 1);
-        if (st.halted > 0) st.halted -= 1;
+      closes.push({ h, prices: Object.assign({}, P) });
+      for (const sym in TICKERS) {
+        hist[sym].push(Math.round(P[sym] * 100) / 100);
+        if (hist[sym].length > 120) hist[sym].shift();
+        if (halted[sym] > 0) halted[sym] -= 1;
       }
     }
   }
-  S.stockHour = H;
+  return { hNow, P, dayOpen, hist, anchorsToday, halted, idxAnchors, idxDayOpen, ev, evStart, closes };
+}
+
+// applique la marche nationale à l'état local (les parts restent à vous)
+function natApply() {
+  const w = natWalk();
+  const mNow = Math.floor(Date.now() / 8000);
+  for (const sym in TICKERS) {
+    const st = S.stocks[sym], t = TICKERS[sym];
+    st.anchor = w.P[sym];
+    st.dayOpen = w.dayOpen[sym];
+    st.hist = w.hist[sym].length ? w.hist[sym] : [t.base];
+    st.halted = w.halted[sym];
+    // séance du jour + micro-bruit récent (déterministe) = courbe pleine
+    const tail = [];
+    if (marketOpen() && !st.halted) {
+      for (let m = mNow - 45; m <= mNow; m++) {
+        let p = st.anchor * (1 + natGaussK("m|" + sym + "|" + m) * (t.vol / 14));
+        const r = p / st.dayOpen;
+        if (r > 1.15) p = st.dayOpen * 1.15;
+        if (r < 0.85) p = st.dayOpen * 0.85;
+        tail.push(Math.round(p * 100) / 100);
+      }
+    }
+    st.intra = (w.anchorsToday[sym].length ? w.anchorsToday[sym] : st.hist.slice(-20)).concat(tail).slice(-120);
+    if (st.intra.length < 2) st.intra = [st.anchor, st.anchor];
+    st.price = st.intra[st.intra.length - 1];
+  }
+  S.indexHist = w.idxAnchors.length ? w.idxAnchors.slice(-120) : [35_420];
+  S.indexDayOpen = w.idxDayOpen;
+
+  // bannière d'événement — annoncé en gros titre UNE seule fois
+  if (w.ev) {
+    S.eventNow = { head: w.ev.head, shocks: {}, hoursLeft: w.ev.hoursLeft };
+    if (S.natEvSeen !== w.evStart) {
+      S.natEvSeen = w.evStart;
+      headline(`<b>${w.ev.head}</b>`);
+      journal(`BOURSE — ${w.ev.head}`);
+    }
+  } else {
+    S.eventNow = null;
+  }
+
+  // dividendes des clôtures écoulées (positions × cours de clôture national)
+  if (S.natDivHour < 0) S.natDivHour = w.hNow; // migration : pas de rétroactif
+  let divTotal = 0;
+  for (const c of w.closes) {
+    if (c.h <= S.natDivHour) continue;
+    for (const sym in TICKERS) {
+      const sh = S.stocks[sym].shares || 0;
+      if (sh > 0) divTotal += sh * c.prices[sym] * TICKERS[sym].div * (S.level >= 40 ? 1.1 : 1);
+    }
+  }
+  S.natDivHour = w.hNow;
   if (divTotal >= 1) {
     S.cash += divTotal;
     toast(`💰 Dividendes de clôture : +${fmt(divTotal)}`, "gain");
     updateHUD();
   }
+  if (!S.natV1) {
+    S.natV1 = true;
+    journal("LA COTE PASSE AU NATIONAL — mêmes cours pour toute la France, en temps réel, poussés par l'activité de tous les magnats. Vos positions sont conservées.");
+  }
+  save();
 }
 
+function stockTick() {
+  const h = natHourNow();
+  if (h === natLastHour && !natDirty) return;
+  natLastHour = h;
+  natDirty = false;
+  natApply();
+  if (panelTab === "bourse") refreshBourseTexts();
+}
+
+// la séance nationale suit l'heure RÉELLE (l'accélérateur de test n'agit
+// plus sur la bourse : elle est partagée par tous les joueurs)
 function marketOpen() {
-  const H = Math.floor(S.gameMs / HOUR);
-  const hod = (9 + H) % 24;
-  return !isWeekend() && hod >= 9 && hod < 18;
+  const d = new Date();
+  return d.getDay() >= 1 && d.getDay() <= 5 && d.getHours() >= 9 && d.getHours() < 18;
 }
 
-// micro-ticks : pendant la séance, les cours frémissent toutes les ~8 s
-// réelles (le moteur horaire garde la main sur la tendance de fond)
+// micro-ticks : toutes les ~8 s, frémissement déterministe autour de
+// l'anchor horaire — tous les joueurs voient exactement la même courbe
 let lastMicroTick = 0;
 function microTick(now) {
   if (now - lastMicroTick < 8000 || !marketOpen()) return;
   lastMicroTick = now;
+  const m = Math.floor(now / 8000);
   for (const sym in S.stocks) {
     const st = S.stocks[sym], t = TICKERS[sym];
-    if (st.halted > 0) continue;
-    st.price *= 1 + gauss() * (t.vol / 14);
-    const r = st.price / st.dayOpen;
-    if (r > 1.15) st.price = st.dayOpen * 1.15;
-    if (r < 0.85) st.price = st.dayOpen * 0.85;
-    st.intra.push(Math.round(st.price * 100) / 100);
+    if (st.halted > 0 || !(st.anchor > 0)) continue;
+    let p = st.anchor * (1 + natGaussK("m|" + sym + "|" + m) * (t.vol / 14));
+    const r = p / st.dayOpen;
+    if (r > 1.15) p = st.dayOpen * 1.15;
+    if (r < 0.85) p = st.dayOpen * 0.85;
+    st.price = Math.round(p * 100) / 100;
+    st.intra.push(st.price);
     if (st.intra.length > 120) st.intra.shift();
   }
   S.indexHist.push(Math.round(indexValue()));
@@ -752,6 +1007,8 @@ function trade(sym, qty) {
     st.shares -= n;
     toast(`📉 Vendu ${n} ${TICKERS[sym].name} — +${fmt(n * st.price)}`, "gain");
   }
+  // la demande agrégée pèse sur le cours national (±0,05 % par ordre de 10)
+  pushSignal(sym, Math.max(-0.005, Math.min(0.005, qty * 0.00005)), "ordre");
   questBump("bourse");
   updateHUD(); save();
   if (panelTab === "bourse") refreshBourseTexts();
@@ -776,7 +1033,9 @@ function npcTick() {
     if (holdings >= NPC_MAX_PROPS) continue;
     S.npcLast[key] = d;
 
-    let free = PLACES.filter((p) => !S.owned[p.id] && !npcOf(p.id));
+    // les rivaux IA restent des figures LOCALES : ils n'achètent que dans
+    // le village d'origine, pas dans les zones découvertes ailleurs
+    let free = PLACES.filter((p) => BAKED_IDS.has(p.id) && !S.owned[p.id] && !npcOf(p.id) && !rivalPlayerOf(p.id));
     const target = monopolyTarget();
     if (d < 21 && target) free = free.filter((p) => p.cat !== target.cat);
     if (d < 30) {
@@ -855,8 +1114,9 @@ function acquireByFrags(p) {
     headline(`<b>ACTE RECONSTITUÉ.</b> Les parchemins réunis font de vous le propriétaire légal de ${p.name} — sans débourser un franc.`);
     journal(`L'acte notarial de <b>${p.name}</b> reconstitué parchemin par parchemin : propriété acquise sans débourser un franc.`);
   }
-  checkMonopolies(p.cat);
+  checkMonopolies(p.cat, p);
   pushProperty(p.id, "parchemins");
+  pushSignal(CAT_TICKER[p.cat], 0.003, "opa");
   refreshAllMarkers(); updateHUD(); save();
 }
 
@@ -969,16 +1229,12 @@ function updateSpawnSource() {
   try { map.getSource("spawns")?.setData(spawnsGeoJSON()); } catch (e) {}
 }
 
-// choc boursier ponctuel (tuyaux de l'Informateur) — badge visible 30 min
+// choc boursier (tuyaux de l'Informateur) : désormais un SIGNAL NATIONAL —
+// il part dans stock_signals et infléchit la cote de toute la France.
+// Badge 🕵️ visible 30 min sur la carte de la valeur.
 function applyShock(sym, pct) {
-  const st = S.stocks[sym];
-  st.price *= 1 + pct;
-  const r = st.price / st.dayOpen;
-  if (r > 1.15) st.price = st.dayOpen * 1.15;
-  if (r < 0.85) st.price = st.dayOpen * 0.85;
-  st.intra.push(Math.round(st.price * 100) / 100);
-  if (st.intra.length > 120) st.intra.shift();
-  st.shock = { pct, at: Date.now() };
+  pushSignal(sym, pct, "tuyau");
+  S.stocks[sym].shock = { pct, at: Date.now() };
 }
 
 function openEncounter(id) {
@@ -1044,21 +1300,32 @@ function resolveEncounter(s, success) {
       lines.push({ ic: "💵", txt: "Dédommagement pour le dérangement : +300 ₣", cls: "up" });
     }
   } else if (s.type === "informateur") {
+    // le tuyau pèse sur la cote NATIONALE (±0,3–0,8 %, plafonné §7.3) —
+    // il faut un compte pour peser sur le marché de toute la France
     if (success) {
-      const pct = 0.02 + Math.random() * 0.02;
-      applyShock(sym, pct);
-      sfx("mono");
-      lines.push({ ic: "📈", txt: `Tuyau en or : ${t.name} +${(pct * 100).toFixed(1).replace(".", ",")} %`, cls: "up" });
-      headline(`<b>TUYAU EN OR.</b> ${t.name} bondit de +${(pct * 100).toFixed(1).replace(".", ",")} %.`);
-      journal(`L'Informateur avait raison : <b>${t.name}</b> +${(pct * 100).toFixed(1).replace(".", ",")} %.`);
+      if (me) {
+        const pct = 0.003 + Math.random() * 0.005;
+        applyShock(sym, pct);
+        sfx("mono");
+        lines.push({ ic: "📈", txt: `Tuyau en or : ${t.name} +${(pct * 100).toFixed(1).replace(".", ",")} % — pour toute la France`, cls: "up" });
+        headline(`<b>TUYAU EN OR.</b> Votre rumeur pousse ${t.name} sur la cote nationale.`);
+        journal(`Votre Informateur avait raison : <b>${t.name}</b> poussé de +${(pct * 100).toFixed(1).replace(".", ",")} % sur le marché national.`);
+      } else {
+        S.cash += 250;
+        sfx("coin");
+        lines.push({ ic: "💵", txt: "Tuyau revendu sous le manteau : +250 ₣", cls: "up" });
+        lines.push({ ic: "🌍", txt: "Avec un compte (EMPIRE), vos tuyaux pèseraient sur la cote nationale", cls: "" });
+      }
     } else {
-      const pct = 0.015 + Math.random() * 0.005;
       const frais = Math.min(S.cash, 200);
       S.cash -= frais;
-      applyShock(sym, -pct);
       lines.push({ ic: "🕳️", txt: `Tuyau percé : −${fmt(frais)}`, cls: "down" });
-      lines.push({ ic: "📉", txt: `${t.name} −${(pct * 100).toFixed(1).replace(".", ",")} %`, cls: "down" });
-      journal(`Le tuyau de l'Informateur était percé : <b>${t.name}</b> −${(pct * 100).toFixed(1).replace(".", ",")} %.`);
+      if (me) {
+        const pct = 0.002 + Math.random() * 0.002;
+        applyShock(sym, -pct);
+        lines.push({ ic: "📉", txt: `La rumeur sort quand même : ${t.name} −${(pct * 100).toFixed(1).replace(".", ",")} %`, cls: "down" });
+        journal(`Le tuyau de l'Informateur était percé : <b>${t.name}</b> égratigné sur le marché national.`);
+      }
     }
   } else if (s.type === "inspecteur") {
     if (success) {
@@ -1308,7 +1575,7 @@ function tick() {
   ensureDeals();
   if (d > S.lastChargesDay) {
     let charges = 0;
-    for (const id in S.owned) charges += placeValue(byId[id]) * ECO.chargesDay;
+    for (const id in S.owned) if (byId[id]) charges += placeValue(byId[id]) * ECO.chargesDay;
     if (charges > 0) S.cash -= charges * (d - S.lastChargesDay);
     S.lastChargesDay = d;
   }
@@ -1766,8 +2033,9 @@ function renderPanel() {
           </div>
         </div>`;
       }).join("")}
-      <div class="proto-note">Prototype : bourse déverrouillée d'office (en prod : après le premier monopole).<br>
-      Économie simulée — en production, les cours réagiront à l'activité réelle des joueurs.</div>`;
+      <div class="proto-note">Cote NATIONALE en temps réel — les mêmes cours pour tous les joueurs de France,
+      poussés par l'activité réelle : achats de commerces, ordres en bourse, tuyaux d'Informateur.<br>
+      Prototype : bourse déverrouillée d'office (en prod : après le premier monopole).</div>`;
 
     c.querySelectorAll("[data-trade]").forEach((b) =>
       b.addEventListener("click", (e) => {
@@ -1809,7 +2077,7 @@ function renderPanel() {
   }
 
   else if (panelTab === "empire") {
-    const ids = Object.keys(S.owned);
+    const ids = Object.keys(S.owned).filter((id) => byId[id]);
     const rentTotal = ids.reduce((a, id) => a + rentPerDay(byId[id]), 0);
     const propTotal = ids.reduce((a, id) => a + placeValue(byId[id]), 0);
     const pending = ids.reduce((a, id) => a + accrued(byId[id]), 0);
@@ -1861,8 +2129,8 @@ function renderPanel() {
       `}
       <div class="walk-line">⭐ <b>Niveau ${S.level}/${LEVEL_CAP}</b> · ${Math.round(S.xp)}/${xpNeeded(S.level)} XP · ☕ ×${S.items.cafe || 0} · 🥐 ×${S.items.croissant || 0}</div>
       ${S.level < LEVEL_CAP ? `<div class="walk-line">🎁 Niveau ${S.level + 1} : +${fmt(levelCash(S.level + 1))} et provisions${PERKS[S.level + 1] ? ` · <b>${PERKS[S.level + 1]}</b>` : ""}</div>` : `<div class="walk-line">👑 <b>Légende de Mouriès</b> — niveau maximum atteint.</div>`}
-      ${Object.keys(S.frags).length ? `<button class="help-link" id="a-collections" style="display:block;margin:4px 0 6px">📜 COLLECTIONS EN COURS — tout voir →</button>` +
-        Object.keys(S.frags)
+      ${Object.keys(S.frags).filter((id) => byId[id]).length ? `<button class="help-link" id="a-collections" style="display:block;margin:4px 0 6px">📜 COLLECTIONS EN COURS — tout voir →</button>` +
+        Object.keys(S.frags).filter((id) => byId[id])
           .sort((a, b) => (S.frags[b] / fragsNeeded(byId[b])) - (S.frags[a] / fragsNeeded(byId[a])))
           .slice(0, 3)
           .map((id) => {
@@ -1992,7 +2260,7 @@ function renderPanel() {
       .sort((a, b) => (S.frags[b] / fragsNeeded(byId[b])) - (S.frags[a] / fragsNeeded(byId[a])));
     c.innerHTML = `<h2>📜 Collections</h2>
       <div class="panel-sub">${ids.length} acte${ids.length > 1 ? "s" : ""} en cours de reconstitution ·
-        ${Object.keys(S.owned).length}/${PLACES.length} lieux du village possédés</div>` +
+        ${Object.keys(S.owned).length} lieu${Object.keys(S.owned).length > 1 ? "x" : ""} possédé${Object.keys(S.owned).length > 1 ? "s" : ""} · ${PLACES.length} répertoriés</div>` +
       (ids.length
         ? ids.map((id) => {
             const p = byId[id], need = fragsNeeded(p);
@@ -2004,7 +2272,7 @@ function renderPanel() {
             </div>`;
           }).join("")
         : `<div class="locked"><div class="big">📜</div><p>Aucun acte en cours. Ramassez des parchemins scellés dans les rues — chaque fragment vous rapproche d'une propriété gratuite.</p></div>`) +
-      `<div class="proto-note">Les parchemins visent surtout les lieux que vous longez — mais les joyaux du village circulent aussi, où que vous soyez.<br>Un jour, à l'échelle nationale : votre part de la Tour Eiffel (en 100 morceaux).</div>`;
+      `<div class="proto-note">Les parchemins visent surtout les lieux que vous longez — mais les joyaux du secteur circulent aussi, où que vous soyez.<br>La France entière se découvre en explorant : chaque lieu réel a le même prix pour tous les joueurs.</div>`;
     c.querySelectorAll(".frag-card").forEach((row) =>
       row.addEventListener("click", () => {
         closePanel();
@@ -2014,13 +2282,13 @@ function renderPanel() {
 
   else if (panelTab === "aide") {
     const steps = [
-      ["🏠", "Achetez les commerces autour de vous", "à moins de 300 m — ou touchez « S'y rendre » en mode balade."],
+      ["🏠", "Achetez les commerces autour de vous", "à moins de 300 m — ou touchez « S'y rendre » en mode balade. Partout en France : les vrais lieux apparaissent en explorant."],
       ["🪙", "Encaissez les loyers", "vos biens produisent en continu, mais l'accumulation se bloque après 8 h : revenez souvent."],
       ["👔", "Faites la Tournée du proprio", "passez voir un bien sur place : son loyer double pendant 24 h (×3 le week-end)."],
-      ["👑", "Décrochez des Monopoles", "possédez TOUS les commerces d'une catégorie du village : loyers ×2 pour toujours."],
+      ["👑", "Décrochez des Monopoles", "possédez TOUS les commerces d'une catégorie du quartier : loyers ×2 pour toujours."],
       ["🏗️", "Améliorez vos biens", "Ravalement, Gentrification, Flagship : le loyer grimpe à chaque niveau."],
-      ["📈", "Spéculez à la Bourse", "séance 9h–18h, dividendes à la clôture, gros événement chaque lundi. Vos loyers financent vos actions."],
-      ["⚔️", "Surveillez les rivaux", "quatre magnats achètent le village. Rachetez leurs biens (×1,5) avant qu'ils ne bloquent vos monopoles."],
+      ["📈", "Spéculez à la Bourse NATIONALE", "mêmes cours pour toute la France (séance 9h–18h, heure réelle), poussés par l'activité de tous les joueurs. Dividendes à la clôture."],
+      ["⚔️", "Surveillez les rivaux", "des magnats IA achètent le village — et de VRAIS joueurs possèdent leurs quartiers. Réunissez les parchemins d'un lieu pour l'exproprier."],
       ["🎯", "Suivez le guide", "les Défis du jour paient, et la pastille en bas d'écran vous dit toujours la meilleure action."],
     ];
     c.innerHTML = `<h2>Comment jouer</h2>
@@ -2083,12 +2351,14 @@ function drawSpark(cv, data, openVal) {
 function refreshBourseTexts() {
   const c = $("#panel-content");
   if (panelTab !== "bourse") return;
-  const H = Math.floor(S.gameMs / HOUR), hod = (9 + H) % 24;
+  // la séance nationale vit à l'heure RÉELLE
+  const d0 = new Date(), hod = d0.getHours();
+  const weR = d0.getDay() === 0 || d0.getDay() === 6;
   const open = marketOpen();
   const chip = c.querySelector("#bourse-chip");
   if (chip) {
     chip.textContent = open ? `🕐 Clôture dans ${18 - hod} h`
-      : isWeekend() ? "🕐 Week-end — fermé"
+      : weR ? "🕐 Week-end — fermé"
       : hod < 9 ? "🕐 Ouverture à 9h" : "🕐 Fermé — demain 9h";
   }
   const idx = indexValue();
@@ -2420,6 +2690,8 @@ function setPlayer(lat, lon, fly = false) {
   if (fly) map.flyTo({ center: [lon, lat], zoom: Math.max(map.getZoom(), 16) });
   else if (follow) map.easeTo({ center: [lon, lat], duration: 750 });
   if (sheetPlace) openSheet(sheetPlace, true);
+  // zone inconnue ? le notaire répertorie les affaires du coin (OSM)
+  discoverAround(lat, lon);
 }
 
 // la caméra suit le personnage ; déplacer la carte la libère, 🎯 recentre
@@ -2758,7 +3030,7 @@ fetch("https://tiles.openfreemap.org/styles/positron")
       if (S.onboarded) { $("#onboard").style.display = "none"; startGPS(); }
       // bilan du retour : ce qui s'est accumulé pendant l'absence
       if (offlineGapMs > 2 * HOUR) {
-        const pending = Object.keys(S.owned)
+        const pending = Object.keys(S.owned).filter((id) => byId[id])
           .reduce((a, id) => a + accrued(byId[id]), 0);
         if (pending >= 1) {
           setTimeout(() => toast(`🌙 Pendant votre absence : ${fmt(pending)} de loyers vous attendent`, "gain"), 1200);
@@ -2808,6 +3080,23 @@ function initNet() {
   if (!window.supabase) return;
   try {
     sb = window.supabase.createClient(SUPA_URL, SUPA_KEY);
+    // le monde est VISIBLE sans compte : cadastre, classement, signaux de
+    // bourse (le compte ne sert qu'à posséder et à peser sur la cote)
+    fetchWorld();
+    fetchSignals();
+    sb.channel("monde")
+      .on("postgres_changes", { event: "*", schema: "public", table: "properties" }, (payload) => {
+        if (payload.eventType === "DELETE") delete remoteProps[payload.old.place_id];
+        else remoteProps[payload.new.place_id] = payload.new;
+        refreshAllMarkers();
+        if (sheetPlace) openSheet(sheetPlace, true);
+      })
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "stock_signals" }, (payload) => {
+        const g = payload.new;
+        natSignalsRaw.push({ sym: g.sym, pct: g.pct, h: sigHour(g.created_at) });
+        natDirty = true; // la cote de tout le monde frémit au prochain tick
+      })
+      .subscribe();
     sb.auth.onAuthStateChange((_event, session) => {
       const was = !!me;
       me = session?.user || null;
@@ -2815,6 +3104,8 @@ function initNet() {
     });
   } catch (e) { sb = null; }
 }
+
+const sigHour = (iso) => Math.floor((new Date(iso).getTime() - BOURSE_EPOCH) / HOUR);
 
 async function onLogin() {
   try {
@@ -2830,18 +3121,31 @@ async function onLogin() {
       const r = remoteProps[id];
       if (!r || r.owner === me.id) pushProperty(id, "achat");
     }
-    // cadastre en temps réel
-    sb.channel("cadastre")
-      .on("postgres_changes", { event: "*", schema: "public", table: "properties" }, (payload) => {
-        if (payload.eventType === "DELETE") delete remoteProps[payload.old.place_id];
-        else remoteProps[payload.new.place_id] = payload.new;
-        refreshAllMarkers();
-        if (sheetPlace) openSheet(sheetPlace, true);
-      })
-      .subscribe();
     setInterval(snapshot, 60_000);
     tip("monde", "Vous êtes dans le monde commun : vos propriétés portent votre nom, celles des autres magnats apparaissent sur la carte — et leurs parchemins circulent…");
   } catch (e) { /* mode solo si le réseau flanche */ }
+}
+
+// --- la bourse nationale : signaux agrégés des joueurs
+async function fetchSignals() {
+  try {
+    const since = new Date(Date.now() - 21 * DAY).toISOString();
+    const { data } = await sb.from("stock_signals")
+      .select("sym, pct, created_at")
+      .gte("created_at", since)
+      .order("created_at", { ascending: true })
+      .limit(8000);
+    natSignalsRaw = (data || []).map((g) => ({ sym: g.sym, pct: g.pct, h: sigHour(g.created_at) }));
+    natDirty = true;
+  } catch (e) {}
+}
+
+function pushSignal(sym, pct, reason) {
+  if (!sb || !me || !sym || !pct) return;
+  pct = Math.max(-0.01, Math.min(0.01, pct));
+  sb.from("stock_signals")
+    .insert({ sym, pct, reason: reason || "", author: me.id })
+    .then(() => {}); // l'écho realtime l'appliquera chez tout le monde, nous compris
 }
 
 async function fetchWorld() {
