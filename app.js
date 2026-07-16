@@ -2251,8 +2251,10 @@ function renderPanel() {
     $("#a-strava")?.addEventListener("click", stravaAskAndConnect);
     $("#a-strava-sync")?.addEventListener("click", () => stravaSync(true));
     $("#a-strava-off")?.addEventListener("click", () => {
-      S.strava = freshState().strava; save(); renderPanel();
-      notice("Strava délié — les km redeviennent GPS-app-ouverte uniquement.");
+      // on n'efface que le lien : id/secret et l'anti-doublon (seen/km) restent
+      Object.assign(S.strava, { access: "", refresh: "", exp: 0, athlete: "" });
+      save(); renderPanel();
+      notice("Strava délié — re-reliez quand vous voulez, rien ne sera compté deux fois.");
     });
     c.querySelectorAll(".prop-card").forEach((row) =>
       row.addEventListener("click", () => {
@@ -2880,6 +2882,9 @@ async function stravaSync(manual = false) {
     const res = await fetch(
       `https://www.strava.com/api/v3/athlete/activities?after=${after}&per_page=50`,
       { headers: { Authorization: "Bearer " + S.strava.access } });
+    if (res.status === 401 || res.status === 403) {
+      throw new Error("accès aux activités refusé — déliez puis re-reliez Strava en laissant cochées les cases d'activités");
+    }
     if (!res.ok) throw new Error("activités refusées (" + res.status + ")");
     let meters = 0, n = 0;
     for (const a of await res.json()) {
@@ -2915,6 +2920,12 @@ async function stravaBoot() {
   const q = new URLSearchParams(location.search);
   if (q.get("state") === "magnat" && q.get("code")) {
     history.replaceState(null, "", location.pathname);
+    // Strava renvoie le scope réellement ACCORDÉ (les cases sont décochables) :
+    // sans activity:read, la lecture des activités fera 403 — autant le dire tout de suite
+    if (!(q.get("scope") || "").includes("activity:read")) {
+      notice("Strava : l'accès aux activités a été refusé — re-reliez en laissant cochées les cases d'activités.");
+      journal("LA TOURNÉE — Strava est relié mais <b>sans l'accès aux activités</b> (case décochée à l'autorisation). Déliez puis re-reliez en laissant tout coché.");
+    }
     try {
       await stravaToken({ grant_type: "authorization_code", code: q.get("code") });
       journal("LA TOURNÉE — compte <b>Strava</b> relié. Vos courses et marches créditent désormais la Tournée, même app fermée.");
