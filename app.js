@@ -1690,19 +1690,6 @@ function updateHUD() {
   checkTitle();
   ensureQuests();
 
-  const t = monopolyTarget();
-  const mono = $("#mono-chip");
-  if (t) {
-    mono.hidden = false;
-    $("#mono-label").textContent = `${CAT_META[t.cat].icon} Monopole ${t.mine}/${t.total}`;
-    const segs = $("#mono-segs");
-    if (segs.childElementCount !== t.total) {
-      segs.innerHTML = Array.from({ length: t.total }, () => '<div class="seg"></div>').join("");
-    }
-    [...segs.children].forEach((s, i) => s.classList.toggle("on", i < t.mine));
-  } else {
-    mono.hidden = true;
-  }
   updateBadges();
   updateCoach();
 }
@@ -2011,14 +1998,6 @@ $("#sheet-close").addEventListener("click", () => {
   if (player) map.easeTo({ center: [player.lon, player.lat], duration: 600 });
 });
 
-// la jauge de monopole est tappable : vole vers la prochaine pièce à acheter
-$("#mono-chip").addEventListener("click", () => {
-  const t = monopolyTarget();
-  if (!t) return;
-  const next = PLACES.filter((p) => p.cat === t.cat && !S.owned[p.id])
-    .sort((a, b) => priceToPay(a) - priceToPay(b))[0];
-  if (next) openSheet(next);
-});
 $("#mg-btn").addEventListener("click", mgAttempt);
 $("#mg-flee").addEventListener("click", () => mgClose(true));
 $("#mg-close").addEventListener("click", () => mgClose(false));
@@ -2154,6 +2133,7 @@ function renderPanel() {
     const rentTotal = ids.reduce((a, id) => a + rentPerDay(byId[id]), 0);
     const propTotal = ids.reduce((a, id) => a + placeValue(byId[id]), 0);
     const pending = ids.reduce((a, id) => a + accrued(byId[id]), 0);
+    const monoT = monopolyTarget();
     ensureQuests();
     c.innerHTML = `<h2>Votre Empire</h2>
       <div class="panel-sub">
@@ -2179,6 +2159,7 @@ function renderPanel() {
         <div class="stile"><span class="stile-ic">📈</span><b>${fmt(stockValue())}</b><span class="stile-lbl">Actions</span></div>
         <div class="stile gold"><span class="stile-ic">🪙</span><b>+${fmt(rentTotal)}</b><span class="stile-lbl">Loyers / jour</span></div>
       </div>
+      ${monoT ? `<button class="help-link" id="a-mono" style="display:block;margin:2px 0 8px">👑 Monopole des ${CAT_META[monoT.cat].plural} du quartier : <b>${monoT.mine}/${monoT.total}</b> — compléter coûte ~${fmtShort(monoT.cost)} →</button>` : ""}
       ${pending >= 1 ? `<div class="btn-row" style="margin-bottom:12px">
         <button class="btn" id="a-collect-all">🪙 Tout encaisser — ${fmt(pending)}</button></div>` : ""}
       <div class="btn-row" style="margin-bottom:12px">
@@ -2240,6 +2221,13 @@ function renderPanel() {
     $("#a-help")?.addEventListener("click", () => openPanel("aide"));
     $("#a-perso")?.addEventListener("click", () => openPanel("perso"));
     $("#a-world")?.addEventListener("click", () => { closePanel(); $("#login").hidden = false; });
+    $("#a-mono")?.addEventListener("click", () => {
+      const t = monopolyTarget();
+      if (!t) return;
+      const next = PLACES.filter((p) => p.cat === t.cat && !S.owned[p.id] && !rivalPlayerOf(p.id))
+        .sort((a, b) => priceToPay(a) - priceToPay(b))[0];
+      if (next) { closePanel(); openSheet(next); }
+    });
     $("#a-collections")?.addEventListener("click", () => openPanel("collections"));
     $("#a-collect-all")?.addEventListener("click", () => { collectAll(); renderPanel(); });
     c.querySelectorAll(".prop-card").forEach((row) =>
