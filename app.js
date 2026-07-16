@@ -763,12 +763,6 @@ function sellPlace(p) {
   refreshAllMarkers(); updateHUD(); updateCoach(); save();
 }
 
-function goTo(p) {
-  if (!simMode) enableSim(true);
-  setPlayer(p.lat, p.lon, true);
-  toast(`🚶 Vous voilà devant ${p.name}`);
-  openSheet(p, true);
-}
 
 function checkMonopolies(cat, around) {
   if (S.monopolies.includes(cat)) return;
@@ -1297,8 +1291,7 @@ function applyShock(sym, pct) {
 function openEncounter(id) {
   const s = S.spawns.find((x) => x.id === id);
   if (!s || !player) return;
-  let d = dist(player.lat, player.lon, s.lat, s.lon);
-  if (d > SPAWN_RADIUS_M && simMode) { setPlayer(s.lat, s.lon); d = 0; }
+  const d = dist(player.lat, player.lon, s.lat, s.lon);
   if (d > SPAWN_RADIUS_M) {
     notice(`Trop loin — approchez-vous à ${SPAWN_RADIUS_M} m (${Math.round(d)} m)`);
     return;
@@ -1914,8 +1907,7 @@ function openSheet(p, silent = false) {
       </div>
       <div class="btn-row">
         ${near ? `<button class="btn ghost" id="a-inspect" ${inspected ? "disabled" : ""}>
-          ${inspected ? "👔 Tournée déjà faite — revenez demain" : `👔 Tournée du proprio (loyer ×${isWeekend() ? 3 : 2}, ${inspectHours()} h)`}</button>`
-        : `<button class="btn ghost" id="a-goto">🚶 S'y rendre</button>`}
+          ${inspected ? "👔 Tournée déjà faite — revenez demain" : `👔 Tournée du proprio (loyer ×${isWeekend() ? 3 : 2}, ${inspectHours()} h)`}</button>` : ""}
         ${nextCost != null ? `
         <button class="btn gold" id="a-upgrade" ${S.cash >= nextCost ? "" : "disabled"}>
           🏗️ ${ECO.upNames[o.level]} · loyer ×${ECO.upMult[o.level]} — ${fmt(nextCost)}</button>` : ""}
@@ -1923,7 +1915,6 @@ function openSheet(p, silent = false) {
     $("#a-collect")?.addEventListener("click", () => collect(p));
     $("#a-inspect")?.addEventListener("click", () => inspect(p));
     $("#a-upgrade")?.addEventListener("click", () => upgrade(p));
-    $("#a-goto")?.addEventListener("click", () => goTo(p));
     if (!near) body.insertAdjacentHTML("beforeend",
       '<div class="hint">👔 La tournée : passez voir votre bien sur place et son loyer double pendant 24 h. C\'est votre raison de sortir marcher.</div>');
     // revente : 70 % de la valeur, avec confirmation en deux temps
@@ -1959,9 +1950,7 @@ function openSheet(p, silent = false) {
         <div class="deal-head">📜 <b>Acte en reconstitution</b><span class="deal-km">${got}/${need}</span></div>
         <div class="deal-bar"><div class="deal-fill" style="width:${(got / need) * 100}%"></div></div>
       </div>
-      <div class="hint">Ce lieu appartient à un autre magnat — il ne se rachète pas. Réunissez ses ${need} parchemins notariaux en arpentant le village et il change de mains. C'est du vol légal.</div>
-      ${!near ? '<div class="btn-row"><button class="btn ghost" id="a-goto">🚶 S\'y rendre</button></div>' : ""}`;
-    $("#a-goto")?.addEventListener("click", () => goTo(p));
+      <div class="hint">Ce lieu appartient à un autre magnat — il ne se rachète pas. Réunissez ses ${need} parchemins notariaux en arpentant le quartier et il change de mains. C'est du vol légal.</div>`;
   } else {
     const cost = priceToPay(p);
     const npcOwned = npcOf(p.id);
@@ -1975,15 +1964,14 @@ function openSheet(p, silent = false) {
         ${npcOwned ? `<div class="stat">🏗️ <b>${npcName(p.id)}</b></div>` : ""}
       </div>
       <div class="btn-row">
-        ${!near ? '<button class="btn ghost" id="a-goto">🚶 S\'y rendre</button>'
-          : `<button class="btn ghost" id="a-scout" ${S.scouted[p.id] === gameDay() ? "disabled" : ""}>
-             ${S.scouted[p.id] === gameDay() ? "🔍 Repéré aujourd'hui" : "🔍 Repérage (−5 % au prix)"}</button>`}
+        ${near ? `<button class="btn ghost" id="a-scout" ${S.scouted[p.id] === gameDay() ? "disabled" : ""}>
+             ${S.scouted[p.id] === gameDay() ? "🔍 Repéré aujourd'hui" : "🔍 Repérage (−5 % au prix)"}</button>` : ""}
         <button class="btn" id="a-buy" ${near && afford ? "" : "disabled"}>
           ${npcOwned ? "😤 Racheter" : "📜 Acheter"} — ${fmt(cost)}</button>
       </div>
-      ${near && !afford ? `<div class="hint">Il vous manque ${fmt(cost - S.cash)}. Les loyers tombent, patience.</div>` : ""}`;
+      ${near && !afford ? `<div class="hint">Il vous manque ${fmt(cost - S.cash)}. Les loyers tombent, patience.</div>` : ""}
+      ${!near ? `<div class="hint">🚶 Approchez-vous à ${playerRadius()} m pour repérer et acheter — MAGNAT se joue sur le trottoir.</div>` : ""}`;
     $("#a-buy")?.addEventListener("click", () => buy(p));
-    $("#a-goto")?.addEventListener("click", () => goTo(p));
     $("#a-scout")?.addEventListener("click", () => scout(p));
   }
   if (!silent) map.flyTo({ center: [p.lon, p.lat], zoom: Math.max(map.getZoom(), 16), speed: 1.4 });
@@ -2350,7 +2338,7 @@ function renderPanel() {
 
   else if (panelTab === "aide") {
     const steps = [
-      ["🏠", "Achetez les commerces autour de vous", "à moins de 300 m — ou touchez « S'y rendre » en mode balade. Partout en France : les vrais lieux apparaissent en explorant."],
+      ["🏠", "Achetez les commerces autour de vous", "marchez à moins de 300 m d'un lieu pour l'acheter. Partout en France : les vrais commerces apparaissent sur la carte en explorant."],
       ["🪙", "Encaissez les loyers", "vos biens produisent en continu, mais l'accumulation se bloque après 8 h : revenez souvent."],
       ["👔", "Faites la Tournée du proprio", "passez voir un bien sur place : son loyer double pendant 24 h (×3 le week-end)."],
       ["👑", "Décrochez des Monopoles", "possédez TOUS les commerces d'une catégorie du quartier : loyers ×2 pour toujours."],
@@ -2712,12 +2700,10 @@ async function addGameLayers() {
 }
 
 // ---------------------------------------------------------------------------
-// Position du joueur (GPS ou balade)
+// Position du joueur (GPS)
 // ---------------------------------------------------------------------------
 let player = null;
-let simMode = false;
 let playerMarker = null;
-let gpsChecked = false;
 
 function radiusGeoJSON() {
   if (!player) return { type: "FeatureCollection", features: [] };
@@ -2795,31 +2781,18 @@ function buyAvatar(key) {
   updateHUD(); save();
 }
 
+// GPS uniquement : le jeu se joue là où vous êtes (France entière — les
+// lieux du secteur se découvrent tout seuls). Pas de téléportation.
 function startGPS() {
-  if (!navigator.geolocation) { enableSim(); return; }
+  if (!navigator.geolocation) {
+    notice("📍 Localisation indisponible sur cet appareil — MAGNAT se joue dehors.");
+    return;
+  }
   navigator.geolocation.watchPosition(
-    (pos) => {
-      const { latitude: lat, longitude: lon } = pos.coords;
-      if (!gpsChecked) {
-        gpsChecked = true;
-        if (dist(lat, lon, CENTER[1], CENTER[0]) > 2500) {
-          notice("📍 Vous êtes loin de Mouriès — mode balade activé");
-          enableSim(true);
-          return;
-        }
-      }
-      if (!simMode) setPlayer(lat, lon);
-    },
-    () => { notice("GPS indisponible — mode balade activé"); enableSim(); },
+    (pos) => setPlayer(pos.coords.latitude, pos.coords.longitude),
+    () => notice("📍 GPS indisponible — autorisez la localisation pour jouer."),
     { enableHighAccuracy: true, maximumAge: 5000 }
   );
-}
-
-function enableSim(silent = false) {
-  simMode = true;
-  $("#btn-sim").classList.add("on");
-  if (!player) setPlayer(CENTER[1], CENTER[0]);
-  if (!silent) notice("🚶 Touchez la carte pour vous déplacer");
 }
 
 // ---------------------------------------------------------------------------
@@ -3057,11 +3030,6 @@ const refreshMarker = () => refreshAllMarkers();
 // ---------------------------------------------------------------------------
 // Panneau dev
 // ---------------------------------------------------------------------------
-$("#btn-sim").addEventListener("click", () => {
-  simMode = !simMode;
-  $("#btn-sim").classList.toggle("on", simMode);
-  if (simMode) toast("🚶 Touchez la carte pour vous déplacer");
-});
 // outils de test accessibles depuis la console : magnat.speed(60), magnat.reset()
 window.magnat = {
   speed: (s) => { speed = s || 1; toast(`⏩ ×${speed}`); },
@@ -3079,7 +3047,6 @@ function dismissOnboard() {
   S.onboarded = true; save();
 }
 $("#ob-gps").addEventListener("click", () => { dismissOnboard(); startGPS(); });
-$("#ob-sim").addEventListener("click", () => { dismissOnboard(); enableSim(); });
 
 fetch("https://tiles.openfreemap.org/styles/positron")
   .then((r) => r.json())
@@ -3110,13 +3077,38 @@ fetch("https://tiles.openfreemap.org/styles/positron")
         }
       }
     });
-    // caméra à la Pokémon GO : rivée au personnage — on zoome, on pivote,
-    // mais on ne se promène pas à la main sur la carte
+    // caméra à la Pokémon GO : rivée au personnage — on ne se promène pas
+    // à la main. UN doigt = tourner autour du personnage (horizontal) et
+    // incliner la vue (vertical). DEUX doigts = zoom uniquement.
     map.dragPan.disable();
     map.keyboard.disable();
-    map.on("click", (e) => {
-      if (simMode) setPlayer(e.lngLat.lat, e.lngLat.lng);
+    map.touchZoomRotate.disableRotation();
+    map.touchPitch.disable();
+    map.dragRotate.disable();
+    const canvas = map.getCanvas();
+    let camPtr = null, ptrCount = 0;
+    canvas.addEventListener("pointerdown", (e) => {
+      ptrCount++;
+      camPtr = ptrCount === 1 ? { id: e.pointerId, x: e.clientX, y: e.clientY, moved: 0 } : null;
     });
+    window.addEventListener("pointermove", (e) => {
+      if (!camPtr || e.pointerId !== camPtr.id || ptrCount > 1) return;
+      const dx = e.clientX - camPtr.x, dy = e.clientY - camPtr.y;
+      camPtr.x = e.clientX; camPtr.y = e.clientY;
+      camPtr.moved += Math.abs(dx) + Math.abs(dy);
+      if (camPtr.moved < 6) return; // un tap reste un tap
+      map.jumpTo({
+        bearing: map.getBearing() - dx * 0.45,
+        pitch: Math.max(15, Math.min(70, map.getPitch() - dy * 0.25)),
+        center: player ? [player.lon, player.lat] : map.getCenter(),
+      });
+    });
+    const endPtr = (e) => {
+      ptrCount = Math.max(0, ptrCount - 1);
+      if (camPtr && e.pointerId === camPtr.id) camPtr = null;
+    };
+    window.addEventListener("pointerup", endPtr);
+    window.addEventListener("pointercancel", endPtr);
   })
   .catch(() => {
     document.body.innerHTML =
