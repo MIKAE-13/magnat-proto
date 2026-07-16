@@ -75,6 +75,13 @@ const ENCOUNTER_TYPES = {
     desc: "Imperméable, journal troué. « Un tuyau en or. Mais si vous me vexez, la rumeur sortira quand même… »",
     zone: 0.13, speed: 4.5,
   },
+  // jamais tiré par pickEncounterType (weight 0) : les parchemins ont leur
+  // propre tirage (~30 % des apparitions) — mais ils se NÉGOCIENT désormais
+  parchemin: {
+    emoji: "📜", name: "Le Greffier au Parchemin", weight: 0, rarity: "commune",
+    desc: "Un fragment d'acte notarial, scellé à la cire. Le greffier le lâchera — si vous savez lui parler.",
+    zone: 0.26, speed: 3.2,
+  },
 };
 const npcOf = (id) => S.npcOwners[id] || null;
 const npcName = (id) => (NPCS[npcOf(id)] ? NPCS[npcOf(id)].name : "un rival");
@@ -853,7 +860,7 @@ function natWalk() {
       evStart = h;
     }
     // rumeur de mi-journée (~1 jour sur 2), déterministe elle aussi
-    if (!we && hod === 13 && !ev && natRnd("rum|" + dayKey) < 0.5) {
+    if (!we && hod === 13 && !ev && natRnd("rum|" + dayKey) < 0.65) {
       const syms = Object.keys(TICKERS);
       const sym = syms[natHash("rsym|" + dayKey) % syms.length];
       const mag = (0.04 + natRnd("rmag|" + dayKey) * 0.05) * (natRnd("rdir|" + dayKey) < 0.5 ? -1 : 1);
@@ -867,13 +874,20 @@ function natWalk() {
     // ~1 soir sur 7 en semaine : le jeu du canapé a son rendez-vous)
     const noct = !we && natRnd("noct|" + dayKey) < 0.15 && hod >= 21 && hod < 23;
     if ((!we && hod >= 9 && hod < 18) || noct) {
+      // secousses de séance (11h et 15h) : une valeur prend ±1–3 % sans
+      // prévenir — le marché a ses humeurs, même sans nouvelle
+      const symsAll = Object.keys(TICKERS);
+      const joltSym = hod === 11 || hod === 15
+        ? symsAll[natHash("j|" + hod + "|" + dayKey) % symsAll.length] : null;
+      const joltMag = joltSym
+        ? (0.01 + natRnd("jm|" + hod + "|" + dayKey) * 0.02) * (natRnd("jd|" + hod + "|" + dayKey) < 0.5 ? -1 : 1) : 0;
       for (const sym in TICKERS) {
         const t = TICKERS[sym];
         if (halted[sym] > 0) continue;
         const push = Math.max(-0.03, Math.min(0.03, pending[sym]));
         pending[sym] = 0;
-        P[sym] *= 1 + t.drift / 9 + natGaussK("t|" + sym + "|" + h) * (t.vol / 2.2)
-          + (ev?.shocks[sym] || 0) + push;
+        P[sym] *= 1 + t.drift / 9 + natGaussK("t|" + sym + "|" + h) * (t.vol / 1.7)
+          + (ev?.shocks[sym] || 0) + push + (sym === joltSym ? joltMag : 0);
         const r = P[sym] / dayOpen[sym];
         if (r > 1.15 || r < 0.85) { P[sym] = dayOpen[sym] * (r > 1 ? 1.15 : 0.85); halted[sym] = 1; }
         // un cours ne passe jamais sous 4 % de sa base : il agonise en
@@ -909,7 +923,7 @@ function natApply() {
     const tail = [];
     if (marketOpen() && !st.halted) {
       for (let m = mNow - 45; m <= mNow; m++) {
-        let p = st.anchor * (1 + natGaussK("m|" + sym + "|" + m) * (t.vol / 14));
+        let p = st.anchor * (1 + natGaussK("m|" + sym + "|" + m) * (t.vol / 9));
         const r = p / st.dayOpen;
         if (r > 1.15) p = st.dayOpen * 1.15;
         if (r < 0.85) p = st.dayOpen * 0.85;
@@ -1005,7 +1019,7 @@ function microTick(now) {
   for (const sym in S.stocks) {
     const st = S.stocks[sym], t = TICKERS[sym];
     if (st.halted > 0 || !(st.anchor > 0)) continue;
-    let p = st.anchor * (1 + natGaussK("m|" + sym + "|" + m) * (t.vol / 14));
+    let p = st.anchor * (1 + natGaussK("m|" + sym + "|" + m) * (t.vol / 9));
     const r = p / st.dayOpen;
     if (r > 1.15) p = st.dayOpen * 1.15;
     if (r < 0.85) p = st.dayOpen * 0.85;
@@ -1114,29 +1128,6 @@ const SPAWN_RADIUS_M = 180;
 // (même s'il appartient à quelqu'un — l'OPA hostile par collection)
 // ---------------------------------------------------------------------------
 const fragsNeeded = (p) => Math.min(12, 3 + Math.floor(p.price / 20000));
-
-function collectParchment(s) {
-  const p = byId[s.fragFor];
-  S.spawns = S.spawns.filter((x) => x.id !== s.id);
-  updateSpawnSource();
-  if (!p) return;
-  burst(s, 5);
-  sfx("coin");
-  if (S.owned[p.id]) {
-    S.cash += 250;
-    flyCoin(s, "+250 ₣ (doublon d'archives)", "📜");
-    updateHUD(); save();
-    return;
-  }
-  S.frags[p.id] = (S.frags[p.id] || 0) + 1;
-  const need = fragsNeeded(p);
-  flyCoin(s, `${S.frags[p.id]}/${need} — ${p.name}`, "📜");
-  addXp(8);
-  tip("frag", "Réunissez TOUS les parchemins d'un lieu pour en devenir propriétaire par acte reconstitué — même s'il appartient déjà à quelqu'un.");
-  if (S.frags[p.id] >= need) acquireByFrags(p);
-  if (sheetPlace === p) openSheet(p, true);
-  updateHUD(); save();
-}
 
 function acquireByFrags(p) {
   const victim = npcOf(p.id);
@@ -1250,18 +1241,18 @@ function spawnAlgorithm(now) {
   const before = S.spawns.length;
   S.spawns = S.spawns.filter((s) => (s.exp || 0) > now);
   if (S.spawns.length !== before) updateSpawnSource();
-  if (!player || now - lastSpawnRoll < 20_000) return;
+  if (!player || now - lastSpawnRoll < 12_000) return;
   lastSpawnRoll = now;
   // densité dynamique : ~3-4 rencontres possibles PAR commerce alentour —
   // une rue commerçante peut grouiller (jusqu'à 15), la garrigue reste calme
   const nearby = PLACES.filter((p) => dist(player.lat, player.lon, p.lat, p.lon) < 130).length;
-  const cap = Math.min(15, 3 + nearby + (S.level >= 20 ? 2 : 0)); // 3 → 15, +2 dès le nv 20
+  const cap = Math.min(15, 4 + nearby + (S.level >= 20 ? 2 : 0)); // 4 → 15, +2 dès le nv 20
   if (S.spawns.length >= cap) return;
   const moved = lastRollPos ? dist(player.lat, player.lon, lastRollPos.lat, lastRollPos.lon) : 0;
   lastRollPos = { lat: player.lat, lon: player.lon };
   // c'est la MARCHE qui fait apparaître : presque rien à l'arrêt
-  let p = 0.08 + (moved > 50 ? 0.55 : 0) + Math.min(0.2, nearby * 0.025);
-  if (now - lastSpawnAt > 6 * 60_000) p = 1;    // pity : jamais bredouille > 6 min
+  let p = 0.12 + (moved > 40 ? 0.65 : 0) + Math.min(0.25, nearby * 0.03);
+  if (now - lastSpawnAt > 3 * 60_000) p = 1;    // pity : jamais bredouille > 3 min
   if (Math.random() > p) return;
   const cluster = Math.random() < (nearby >= 4 ? 0.5 : 0.33);
   const size = cluster
@@ -1303,8 +1294,7 @@ function openEncounter(id) {
     notice(`Trop loin — approchez-vous à ${SPAWN_RADIUS_M} m (${Math.round(d)} m)`);
     return;
   }
-  if (s.type === "parchemin") { collectParchment(s); return; }
-  startMinigame(s);
+  startMinigame(s); // parchemins compris : l'acte se NÉGOCIE, il ne se ramasse pas
 }
 
 // applique l'issue de la rencontre et RENVOIE les lignes de résultat
@@ -1395,6 +1385,28 @@ function resolveEncounter(s, success) {
       lines.push({ ic: "🧾", txt: `Redressement express : −${fmt(amende)}`, cls: "down" });
       journal(`L'Inspecteur des Impôts vous a coincé : amende de ${fmt(amende)}.`);
     }
+  } else if (s.type === "parchemin") {
+    const p = byId[s.fragFor];
+    if (!p) {
+      lines.push({ ic: "📜", txt: "L'acte est illisible. Le greffier s'excuse platement.", cls: "" });
+    } else if (!success) {
+      lines.push({ ic: "💨", txt: `Le greffier remballe le parchemin de ${p.name}. « Repassez avec de meilleures manières. »`, cls: "down" });
+    } else if (S.owned[p.id]) {
+      S.cash += 250;
+      sfx("coin");
+      lines.push({ ic: "📜", txt: `Doublon d'archives — ${p.name} est déjà à vous : +250 ₣`, cls: "up" });
+    } else {
+      S.frags[p.id] = (S.frags[p.id] || 0) + 1;
+      const need = fragsNeeded(p);
+      sfx("coin");
+      lines.push({ ic: "📜", txt: `Fragment obtenu : ${p.name} — ${S.frags[p.id]}/${need}`, cls: "up" });
+      tip("frag", "Réunissez TOUS les parchemins d'un lieu pour en devenir propriétaire par acte reconstitué — même s'il appartient déjà à quelqu'un.");
+      if (S.frags[p.id] >= need) {
+        acquireByFrags(p);
+        lines.push({ ic: "👑", txt: `ACTE RECONSTITUÉ — ${p.name} est à vous !`, cls: "up" });
+      }
+      if (sheetPlace === p) openSheet(p, true);
+    }
   }
   updateHUD(); save();
   return lines;
@@ -1472,7 +1484,7 @@ function walkCredit(d) {
 // ---------------------------------------------------------------------------
 // La Négociation : 3 manches, 2 accords pour conclure, objets, écran de résultat
 // ---------------------------------------------------------------------------
-const MG_XP_WIN = { valise: 30, client: 40, inspecteur: 50, informateur: 80 };
+const MG_XP_WIN = { valise: 30, client: 40, inspecteur: 50, informateur: 80, parchemin: 25 };
 let mg = null;
 
 function startMinigame(s) {
@@ -1481,11 +1493,13 @@ function startMinigame(s) {
   const img = $("#mg-img"), fb = $("#mg-emoji");
   img.style.display = ""; fb.style.display = "none";
   img.onerror = () => { img.style.display = "none"; fb.style.display = ""; };
-  img.src = `assets/char-${s.type}.png`;
+  img.src = s.type === "parchemin" ? "assets/ui/parchemin.png" : `assets/char-${s.type}.png`;
   fb.textContent = T.emoji;
   $("#mg-title").textContent = T.name;
-  $("#mg-desc").textContent = T.desc;
-  const stars = { valise: 1, client: 2, inspecteur: 2, informateur: 3 }[s.type];
+  $("#mg-desc").textContent = s.type === "parchemin" && byId[s.fragFor]
+    ? `Un fragment de l'acte de « ${byId[s.fragFor].name} ». ${T.desc}`
+    : T.desc;
+  const stars = { valise: 1, client: 2, inspecteur: 2, informateur: 3, parchemin: 1 }[s.type];
   $("#mg-stars").innerHTML = "★".repeat(stars) + '<span class="dim">' + "★".repeat(3 - stars) + "</span>";
   $("#mg-game").hidden = false;
   $("#mg-result").hidden = true;
