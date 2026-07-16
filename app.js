@@ -3168,7 +3168,12 @@ const refreshMarker = () => refreshAllMarkers();
 // outils de test accessibles depuis la console : magnat.speed(60), magnat.reset()
 window.magnat = {
   speed: (s) => { speed = s || 1; toast(`⏩ ×${speed}`); },
-  reset: () => { localStorage.removeItem(SAVE_KEY); location.reload(); },
+  // le reset efface aussi la sauvegarde cloud, sinon elle serait restaurée
+  reset: () => {
+    const wipe = () => { localStorage.removeItem(SAVE_KEY); location.reload(); };
+    if (sb && me) sb.from("saves").delete().eq("id", me.id).then(wipe, wipe);
+    else wipe();
+  },
   // diagnostic Affaires/Tournée : à lire via Safari > Développement > iPhone
   diag: () => ({
     jour: gameDay(), dealDay: S.dealDay, slots: dealSlots(),
@@ -3323,6 +3328,9 @@ async function onLogin() {
       id: me.id, pseudo: myPseudo(), avatar: S.avatar,
       level: S.level, worth: Math.round(netWorth()),
     });
+    // la sauvegarde cloud d'abord : si elle est plus avancée, la page
+    // repart dessus et le reste de la connexion se rejouera après reload
+    await cloudRestore();
     // lire le cadastre AVANT de publier : on ne s'approprie jamais par
     // simple connexion un lieu déjà tenu par un autre magnat
     await fetchWorld();
@@ -3394,6 +3402,43 @@ function snapshot() {
     level: S.level, worth: Math.round(netWorth()),
     updated_at: new Date().toISOString(),
   }).then(() => {});
+  cloudPush();
+}
+
+// --- la sauvegarde cloud : l'empire survit au navigateur -------------------
+// Le blob complet de S part dans public.saves (RLS : visible du seul joueur).
+// Règle de conflit (prototype) : gameMs ne fait que croître, donc la
+// sauvegarde la plus AVANCÉE fait foi — le cloud ne restaure que s'il a
+// nettement plus de temps de jeu que le local (navigateur vidé, nouveau
+// téléphone, navigation privée).
+let cloudReady = false; // jamais d'écriture cloud avant la décision de restauration
+let cloudLast = "";
+
+async function cloudRestore() {
+  try {
+    const { data } = await sb.from("saves").select("data").eq("id", me.id).maybeSingle();
+    const remote = data?.data;
+    if (remote && (remote.gameMs || 0) > S.gameMs + 60_000) {
+      localStorage.setItem(SAVE_KEY, JSON.stringify(remote));
+      location.reload(); // la page repart sur la sauvegarde restaurée (migrations comprises)
+      return;
+    }
+  } catch (e) { /* réseau muet : on joue local, on repoussera plus tard */ }
+  cloudReady = true;
+  cloudPush();
+}
+
+function cloudPush() {
+  if (!sb || !me || !cloudReady) return;
+  try {
+    const blob = JSON.stringify(S);
+    if (blob === cloudLast) return; // rien de neuf, pas d'upsert
+    cloudLast = blob;
+    sb.from("saves").upsert({
+      id: me.id, data: JSON.parse(blob),
+      updated_at: new Date().toISOString(),
+    }).then(() => {});
+  } catch (e) {}
 }
 
 // un lieu tenu par un AUTRE joueur du monde ?
