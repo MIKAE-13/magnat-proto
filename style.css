@@ -1593,3 +1593,62 @@ button, .btn, .tab, .mg-item, .shop-card, .ward-card, .stock-card, .prop-card,
 /* ---------- HUD épuré : liquidités + niveau, rien d'autre ---------- */
 #worth-pill { gap: 10px; }
 .pill-cash { font-size: 15.5px; font-weight: 800; }
+
+/* ---------- EMPIRE v2 : aéré, façon Pokémon GO ---------- */
+.emp-hero { display: flex; gap: 14px; align-items: center; margin: 8px 0 16px; }
+.emp-avatar {
+  width: 80px; height: 80px; flex: none;
+  object-fit: contain; object-position: center bottom;
+  background: var(--glass-card);
+  border: 1px solid var(--hairline);
+  border-radius: 20px;
+  padding: 6px 6px 2px;
+}
+.emp-id { flex: 1; min-width: 0; }
+.emp-name { font-size: 18px; font-weight: 800; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.emp-title { margin: 3px 0 9px; font-size: 12px; color: var(--ink-soft); }
+.emp-xp { display: flex; align-items: center; gap: 8px; }
+.emp-lvl { font-weight: 800; font-size: 13px; white-space: nowrap; color: var(--ink); }
+.emp-lvl.dim { opacity: 0.45; font-weight: 700; }
+.xp-bar.big {
+  flex: 1; height: 10px; border-radius: 999px;
+  background: var(--glass-card);
+  border: 1px solid var(--hairline);
+  overflow: hidden;
+}
+.xp-bar.big > div { height: 100%; border-radius: 999px; background: var(--gold); transition: width 0.5s; }
+.emp-xp-sub { margin-top: 5px; font-size: 11px; color: var(--ink-soft); }
+
+.menu-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 14px 0 4px; }
+.menu-card {
+  position: relative;
+  display: flex; flex-direction: column; align-items: center; gap: 7px;
+  padding: 15px 6px 12px;
+  background: var(--glass-card);
+  border: 1px solid var(--hairline);
+  border-radius: 16px;
+  font: inherit; font-size: 11.5px; font-weight: 700; color: var(--ink);
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+.menu-card:active { transform: scale(0.95); }
+.mc-ic { font-size: 30px; line-height: 1; }
+.mc-badge {
+  position: absolute; top: 8px; right: 10px;
+  min-width: 19px; height: 19px; padding: 0 5px;
+  border-radius: 999px;
+  background: var(--emerald); color: #fff;
+  font-size: 11px; font-weight: 800; line-height: 19px; text-align: center;
+}
+
+.mono-line {
+  display: flex; align-items: center;
+  width: 100%; text-align: left;
+  padding: 13px 14px; margin: 10px 0 0;
+  background: var(--glass-card);
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  font: inherit; font-size: 13px; color: var(--ink);
+  cursor: pointer;
+}
+.mono-line .chev { margin-left: auto; opacity: 0.45; font-size: 17px; }

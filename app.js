@@ -2135,12 +2135,41 @@ function renderPanel() {
     const pending = ids.reduce((a, id) => a + accrued(byId[id]), 0);
     const monoT = monopolyTarget();
     ensureQuests();
-    c.innerHTML = `<h2>Votre Empire</h2>
-      <div class="panel-sub">
-        <span class="title-chip">${TITLES[S.titleIdx][0]}</span>
-        &nbsp;Jour ${gameDay() + 1} · ${ids.length} propriété${ids.length > 1 ? "s" : ""} · ${S.monopolies.length} monopole${S.monopolies.length > 1 ? "s" : ""}${S.streak > 1 ? ` · 🔥 ${S.streak} j` : ""}
-        &nbsp;<button class="help-link" id="a-help">❓ Comment jouer</button>
+    const xpPct = Math.min(100, (S.xp / xpNeeded(S.level)) * 100);
+    const openColl = Object.keys(S.frags).filter((id) => byId[id] && !S.owned[id]).length;
+    c.innerHTML = `
+      <div class="emp-hero">
+        <img class="emp-avatar" src="assets/avatars/${S.avatar}.png" alt="">
+        <div class="emp-id">
+          <div class="emp-name">${me ? esc(myPseudo()) : "Magnat anonyme"}</div>
+          <div class="emp-title"><span class="title-chip">${TITLES[S.titleIdx][0]}</span> · Jour ${gameDay() + 1}${S.streak > 1 ? ` · 🔥 ${S.streak} j` : ""}</div>
+          <div class="emp-xp">
+            <span class="emp-lvl">⭐ ${S.level}</span>
+            <div class="xp-bar big"><div style="width:${xpPct}%"></div></div>
+            <span class="emp-lvl dim">${S.level < LEVEL_CAP ? S.level + 1 : "MAX"}</span>
+          </div>
+          <div class="emp-xp-sub">${Math.round(S.xp)}/${xpNeeded(S.level)} XP${S.level < LEVEL_CAP ? ` · niv. ${S.level + 1} : +${fmtShort(levelCash(S.level + 1))}${PERKS[S.level + 1] ? ` · <b>${PERKS[S.level + 1]}</b>` : ""}` : " · 👑 Légende"}</div>
+        </div>
       </div>
+
+      ${pending >= 1 ? `<button class="btn gold" id="a-collect-all" style="width:100%;margin:0 0 14px">🪙 Tout encaisser — ${fmt(pending)}</button>` : ""}
+
+      <div class="stat-tiles">
+        <div class="stile"><span class="stile-ic">💵</span><b>${fmtShort(S.cash)}</b><span class="stile-lbl">Liquidités</span></div>
+        <div class="stile"><span class="stile-ic">🏠</span><b>${fmtShort(propTotal)}</b><span class="stile-lbl">Immobilier</span></div>
+        <div class="stile"><span class="stile-ic">📈</span><b>${fmtShort(stockValue())}</b><span class="stile-lbl">Actions</span></div>
+        <div class="stile gold"><span class="stile-ic">🪙</span><b>+${fmtShort(rentTotal)}</b><span class="stile-lbl">Loyers / jour</span></div>
+      </div>
+
+      <div class="menu-grid">
+        <button class="menu-card" id="a-perso"><span class="mc-ic">🕴️</span>Personnage</button>
+        <button class="menu-card" id="a-collections"><span class="mc-ic">📜</span>Collections${openColl ? `<span class="mc-badge">${openColl}</span>` : ""}</button>
+        <button class="menu-card" id="a-help"><span class="mc-ic">❓</span>Aide</button>
+      </div>
+
+      ${monoT ? `<button class="mono-line" id="a-mono">👑&nbsp;<b>Monopole des ${CAT_META[monoT.cat].plural}</b>&nbsp;— ${monoT.mine}/${monoT.total} · ~${fmtShort(monoT.cost)}<span class="chev">›</span></button>` : ""}
+
+      <div class="cust-label" style="margin:16px 0 8px">🎯 DÉFIS DU JOUR</div>
       <div class="quest-list">
         ${S.quests.items.map((q) => {
           const def = QUEST_DEFS[q.id];
@@ -2153,48 +2182,9 @@ function renderPanel() {
           </div>`;
         }).join("")}
       </div>
-      <div class="stat-tiles">
-        <div class="stile"><span class="stile-ic">💵</span><b>${fmt(S.cash)}</b><span class="stile-lbl">Liquidités</span></div>
-        <div class="stile"><span class="stile-ic">🏠</span><b>${fmt(propTotal)}</b><span class="stile-lbl">Immobilier</span></div>
-        <div class="stile"><span class="stile-ic">📈</span><b>${fmt(stockValue())}</b><span class="stile-lbl">Actions</span></div>
-        <div class="stile gold"><span class="stile-ic">🪙</span><b>+${fmt(rentTotal)}</b><span class="stile-lbl">Loyers / jour</span></div>
-      </div>
-      ${monoT ? `<button class="help-link" id="a-mono" style="display:block;margin:2px 0 8px">👑 Monopole des ${CAT_META[monoT.cat].plural} du quartier : <b>${monoT.mine}/${monoT.total}</b> — compléter coûte ~${fmtShort(monoT.cost)} →</button>` : ""}
-      ${pending >= 1 ? `<div class="btn-row" style="margin-bottom:12px">
-        <button class="btn" id="a-collect-all">🪙 Tout encaisser — ${fmt(pending)}</button></div>` : ""}
-      <div class="btn-row" style="margin-bottom:12px">
-        <button class="btn gold" id="a-perso">🕴️ Personnaliser mon personnage</button>
-      </div>
-      <div class="cust-label" style="margin:14px 0 8px">🌍 LE MONDE — CLASSEMENT DES MAGNATS</div>
-      ${me ? `
-        <div class="walk-line">Connecté : <b>${esc(myPseudo())}</b> — vos acquisitions sont inscrites au cadastre mondial.</div>
-        ${leaderboard.length ? `<div class="lb">${leaderboard.map((r, i) => `
-          <div class="lb-row ${me && r.id === me.id ? "me" : ""}">
-            <span class="lb-rank">${["🥇", "🥈", "🥉"][i] || i + 1}</span>
-            <span class="lb-name">${esc(r.pseudo)}</span>
-            <span class="lb-lvl">⭐ ${r.level}</span>
-            <span class="lb-worth">${fmt(r.worth)}</span>
-          </div>`).join("")}</div>` : `<div class="walk-line">Le classement se remplit dès que les magnats prospèrent…</div>`}
-      ` : `
-        <div class="walk-line">Un compte, et le monde vous voit : votre nom sur vos propriétés, le classement national — et l'expropriation par parchemins des vrais joueurs.</div>
-        <div class="btn-row" style="margin-bottom:12px">
-          <button class="btn" id="a-world">🌍 Rejoindre le monde commun</button>
-        </div>
-      `}
-      <div class="walk-line">⭐ <b>Niveau ${S.level}/${LEVEL_CAP}</b> · ${Math.round(S.xp)}/${xpNeeded(S.level)} XP · ☕ ×${S.items.cafe || 0} · 🥐 ×${S.items.croissant || 0}</div>
-      ${S.level < LEVEL_CAP ? `<div class="walk-line">🎁 Niveau ${S.level + 1} : +${fmt(levelCash(S.level + 1))} et provisions${PERKS[S.level + 1] ? ` · <b>${PERKS[S.level + 1]}</b>` : ""}</div>` : `<div class="walk-line">👑 <b>Légende de Mouriès</b> — niveau maximum atteint.</div>`}
-      ${Object.keys(S.frags).filter((id) => byId[id]).length ? `<button class="help-link" id="a-collections" style="display:block;margin:4px 0 6px">📜 COLLECTIONS EN COURS — tout voir →</button>` +
-        Object.keys(S.frags).filter((id) => byId[id])
-          .sort((a, b) => (S.frags[b] / fragsNeeded(byId[b])) - (S.frags[a] / fragsNeeded(byId[a])))
-          .slice(0, 3)
-          .map((id) => {
-            const p = byId[id], need = fragsNeeded(p);
-            return `<div class="deal-card">
-              <div class="deal-head">📜 <b>${p.name}</b><span class="deal-km">${S.frags[id]}/${need}</span></div>
-              <div class="deal-bar"><div class="deal-fill" style="width:${(S.frags[id] / need) * 100}%"></div></div>
-            </div>`;
-          }).join("") : ""}
-      <div class="walk-line">🚶 <b>${S.walk.total.toFixed(1)} km</b> parcourus · indemnités du jour : ${Math.min(S.walk.todayKm, kmCap()).toFixed(1)}/${kmCap()} km</div>
+
+      <div class="cust-label" style="margin:16px 0 8px">🚶 LA TOURNÉE — ${S.walk.total.toFixed(1)} KM PARCOURUS</div>
+      <div class="walk-line">Indemnités du jour : <b>${Math.min(S.walk.todayKm, kmCap()).toFixed(1)}/${kmCap()} km</b> · ☕ ×${S.items.cafe || 0} · 🥐 ×${S.items.croissant || 0}</div>
       ${S.deals.map((dl) => {
         const T = DEAL_TIERS[dl.tier];
         const pct = Math.min(100, (dl.done / dl.km) * 100);
@@ -2204,7 +2194,9 @@ function renderPanel() {
           </div>
           <div class="deal-bar"><div class="deal-fill" style="width:${pct}%"></div></div>
         </div>`;
-      }).join("")}` +
+      }).join("")}
+
+      <div class="cust-label" style="margin:16px 0 8px">🏠 VOS PROPRIÉTÉS${ids.length ? ` (${ids.length}${S.monopolies.length ? ` · ${S.monopolies.length} monopole${S.monopolies.length > 1 ? "s" : ""}` : ""})` : ""}</div>` +
       (ids.length
         ? ids.map((id, i) => {
             const p = byId[id], o = S.owned[id];
@@ -2217,7 +2209,22 @@ function renderPanel() {
               <div class="val">+${fmt(rentPerDay(p))}<span class="val-day">/jour</span></div>
             </div>`;
           }).join("")
-        : `<div class="locked"><div class="big">🏚️</div><p>Vous ne possédez rien. C'est réparable.</p></div>`);
+        : `<div class="locked"><div class="big">🏚️</div><p>Vous ne possédez rien. C'est réparable.</p></div>`) +
+      `<div class="cust-label" style="margin:16px 0 8px">🌍 LE MONDE — CLASSEMENT DES MAGNATS</div>
+      ${me ? `
+        ${leaderboard.length ? `<div class="lb">${leaderboard.map((r, i) => `
+          <div class="lb-row ${me && r.id === me.id ? "me" : ""}">
+            <span class="lb-rank">${["🥇", "🥈", "🥉"][i] || i + 1}</span>
+            <span class="lb-name">${esc(r.pseudo)}</span>
+            <span class="lb-lvl">⭐ ${r.level}</span>
+            <span class="lb-worth">${fmtShort(r.worth)}</span>
+          </div>`).join("")}</div>` : `<div class="walk-line">Le classement se remplit dès que les magnats prospèrent…</div>`}
+      ` : `
+        <div class="walk-line">Un compte, et le monde vous voit : votre nom sur vos propriétés, le classement national — et l'expropriation par parchemins des vrais joueurs.</div>
+        <div class="btn-row" style="margin-bottom:12px">
+          <button class="btn" id="a-world">🌍 Rejoindre le monde commun</button>
+        </div>
+      `}`;
     $("#a-help")?.addEventListener("click", () => openPanel("aide"));
     $("#a-perso")?.addEventListener("click", () => openPanel("perso"));
     $("#a-world")?.addEventListener("click", () => { closePanel(); $("#login").hidden = false; });
