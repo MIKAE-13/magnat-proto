@@ -313,6 +313,15 @@ const isWeekend = () => {
   return dow === 0 || dow === 6;
 };
 const fmt = (n) => Math.round(n).toLocaleString("fr-FR") + " ₣";
+// format court pour le HUD : 742 ₣ · 8,4k ₣ · 96k ₣ · 1,2M ₣
+function fmtShort(n) {
+  n = Math.round(n);
+  const a = Math.abs(n);
+  if (a >= 1_000_000) return (n / 1_000_000).toFixed(a >= 10_000_000 ? 0 : 1).replace(".", ",").replace(",0", "") + "M ₣";
+  if (a >= 10_000) return Math.round(n / 1000) + "k ₣";
+  if (a >= 1_000) return (n / 1000).toFixed(1).replace(".", ",").replace(",0", "") + "k ₣";
+  return n.toLocaleString("fr-FR") + " ₣";
+}
 const byId = {};
 PLACES.forEach((p) => (byId[p.id] = p));
 
@@ -1673,35 +1682,10 @@ setInterval(tick, 1000);
 // ---------------------------------------------------------------------------
 const $ = (s) => document.querySelector(s);
 
-// le patrimoine « compte » vers sa nouvelle valeur au lieu de sauter
-let worthShown = null;
-function animateWorth(to) {
-  const el = $("#worth");
-  if (worthShown === null || Math.abs(to - worthShown) < 2) {
-    worthShown = to; el.textContent = fmt(to); return;
-  }
-  const from = worthShown;
-  worthShown = to;
-  const t0 = performance.now();
-  const step = (tn) => {
-    const k = Math.min(1, (tn - t0) / 500);
-    el.textContent = fmt(from + (to - from) * (1 - Math.pow(1 - k, 3)));
-    if (k < 1) requestAnimationFrame(step);
-  };
-  requestAnimationFrame(step);
-}
-
 function updateHUD() {
-  const worth = netWorth();
-  animateWorth(worth);
-  $("#cash").textContent = fmt(S.cash);
-  // variation du jour, comme sur la maquette H3 (« ↗ +2,4 % »)
+  // HUD épuré (demande Mika) : les liquidités en abrégé + le niveau, rien d'autre
+  $("#cash").textContent = fmtShort(S.cash);
   $("#lvl").textContent = S.level;
-  const delta = S.dayWorth > 0 ? (worth / S.dayWorth - 1) * 100 : 0;
-  const chip = $("#delta");
-  chip.hidden = Math.abs(delta) < 0.05;
-  chip.textContent = `${delta >= 0 ? "↗ +" : "↘ "}${delta.toFixed(1).replace(".", ",")} %`;
-  chip.classList.toggle("down", delta < 0);
 
   checkTitle();
   ensureQuests();

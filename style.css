@@ -1589,3 +1589,7 @@ button, .btn, .tab, .mg-item, .shop-card, .ward-card, .stock-card, .prop-card,
 .frag-card, .quest-item, .lb-row, input {
   touch-action: manipulation;
 }
+
+/* ---------- HUD épuré : liquidités + niveau, rien d'autre ---------- */
+#worth-pill { gap: 10px; }
+.pill-cash { font-size: 15.5px; font-weight: 800; }
