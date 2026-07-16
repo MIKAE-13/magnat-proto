@@ -2784,17 +2784,6 @@ function buyAvatar(key) {
 // GPS uniquement : le jeu se joue là où vous êtes (France entière — les
 // lieux du secteur se découvrent tout seuls). Pas de téléportation.
 function startGPS() {
-  // porte de TEST (prototype) : ?pos=lat,lon dans l'URL fixe la position
-  // sans GPS ni Xcode — ex. ?pos=43.6907,4.8703 — sur n'importe quel appareil
-  const fixed = new URLSearchParams(location.search).get("pos");
-  if (fixed) {
-    const [la, lo] = fixed.split(",").map(Number);
-    if (isFinite(la) && isFinite(lo)) {
-      setPlayer(la, lo, true);
-      notice("🧪 Position de test fixée — retirez ?pos de l'URL pour revenir au GPS");
-      return;
-    }
-  }
   if (!navigator.geolocation) {
     notice("📍 Localisation indisponible sur cet appareil — MAGNAT se joue dehors.");
     return;
@@ -3047,7 +3036,6 @@ window.magnat = {
   reset: () => { localStorage.removeItem(SAVE_KEY); location.reload(); },
   theme: () => { themeForced = themeForced === null ? !night : null; applyTheme(wantNight()); },
   mute: () => { S.muted = !S.muted; save(); },
-  pos: (lat, lon) => setPlayer(lat, lon, true), // téléport de test (console)
   logout: () => sb?.auth.signOut().then(() => location.reload()),
 };
 
