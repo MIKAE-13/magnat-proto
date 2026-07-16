@@ -205,6 +205,10 @@ function freshState() {
     walk: { total: 0, day: -1, todayKm: 0, credited: 0 },
     deals: [],         // les « œufs » : dossiers qui se bouclent en km
     dealDay: -1,
+    // Strava — l'Adventure Sync du prototype web : id/secret de l'app API
+    // (saisis en jeu, stockés en local — prototype uniquement), jetons OAuth,
+    // activités déjà importées (anti-double-comptage)
+    strava: { id: "", secret: "", access: "", refresh: "", exp: 0, athlete: "", lastSync: 0, seen: [], km: 0 },
     avatar: "loup",    // personnage porté
     wardrobe: ["loup", "magnate", "heritier", "baroudeuse"],
     xp: 0,
@@ -247,6 +251,8 @@ function load() {
       const parsed = JSON.parse(raw);
       const st = Object.assign(freshState(), parsed);
       st.stocks = Object.assign(freshStocks(), parsed.stocks || {});
+      st.strava = Object.assign(freshState().strava, parsed.strava || {});
+      if (!Array.isArray(st.deals)) st.deals = [];
       for (const sym in st.stocks) {
         const stk = st.stocks[sym];
         if (!Array.isArray(stk.intra) || stk.intra.length < 10) stk.intra = seedIntra(sym, stk.price);
@@ -296,9 +302,12 @@ function load() {
 let saveTimer = null;
 function save() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    try { localStorage.setItem(SAVE_KEY, JSON.stringify(S)); } catch (e) {}
-  }, 300);
+  saveTimer = setTimeout(saveNow, 300);
+}
+// sauvegarde synchrone : indispensable juste avant de quitter la page (OAuth)
+function saveNow() {
+  clearTimeout(saveTimer);
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(S)); } catch (e) {}
 }
 
 // ---------------------------------------------------------------------------
@@ -1430,8 +1439,8 @@ function ensureDeals() {
   const r = Math.random();
   const tier = r < 0.05 ? 2 : r < 0.30 ? 1 : 0;
   S.deals.push({ id: "dl" + (++S.spawnSeq), tier, km: DEAL_TIERS[tier].km, done: 0 });
-  toast(`🗂️ Un dossier arrive sur votre bureau : « ${DEAL_TIERS[tier].name} » — ${DEAL_TIERS[tier].km} km à pied pour le boucler`);
-  tip("deal", "Les Affaires se bouclent en MARCHANT : vos kilomètres font avancer les dossiers (suivi GPS, app ouverte). Récompense à l'arrivée !");
+  journal(`AFFAIRES — un dossier arrive sur votre bureau : « <b>${DEAL_TIERS[tier].name}</b> », ${DEAL_TIERS[tier].km} km à pied pour le boucler. Il vous attend dans l'Empire, section Tournée.`);
+  tip("deal", "Les Affaires se bouclent en MARCHANT : vos kilomètres font avancer les dossiers (suivi GPS app ouverte, ou Strava relié). Récompense à l'arrivée !");
   save();
 }
 
@@ -2173,16 +2182,30 @@ function renderPanel() {
 
       <div class="cust-label" style="margin:16px 0 8px">🚶 LA TOURNÉE — ${S.walk.total.toFixed(1)} KM PARCOURUS</div>
       <div class="walk-line">Indemnités du jour : <b>${Math.min(S.walk.todayKm, kmCap()).toFixed(1)}/${kmCap()} km</b> · ☕ ×${S.items.cafe || 0} · 🥐 ×${S.items.croissant || 0}</div>
-      ${S.deals.map((dl) => {
-        const T = DEAL_TIERS[dl.tier];
-        const pct = Math.min(100, (dl.done / dl.km) * 100);
+      ${S.deals.length ? S.deals.map((dl) => {
+        const T = DEAL_TIERS[dl.tier] || DEAL_TIERS[0];
+        const km = dl.km || T.km;
+        const pct = Math.min(100, (dl.done / km) * 100);
         return `<div class="deal-card">
           <div class="deal-head">🗂️ <b>${T.name}</b>
-            <span class="deal-km">${Math.min(dl.done, dl.km).toFixed(1)} / ${dl.km} km</span>
+            <span class="deal-km">${Math.min(dl.done, km).toFixed(1)} / ${km} km</span>
           </div>
           <div class="deal-bar"><div class="deal-fill" style="width:${pct}%"></div></div>
         </div>`;
-      }).join("")}
+      }).join("") : `<div class="walk-line">Aucun dossier en cours (0/${dealSlots()}) — le prochain arrive ${S.dealDay === gameDay() ? "demain" : "d'ici peu"}.</div>`}
+      ${S.strava.refresh ? `
+        <div class="deal-card">
+          <div class="deal-head">👟 <b>Strava relié</b>${S.strava.athlete ? ` — ${esc(S.strava.athlete)}` : ""}
+            <span class="deal-km">${S.strava.km.toFixed(1)} km importés</span>
+          </div>
+          <div class="btn-row">
+            <button class="btn" id="a-strava-sync">🔄 Synchroniser</button>
+            <button class="btn ghost" id="a-strava-off">Délier</button>
+          </div>
+        </div>` : `
+        <div class="btn-row" style="margin-bottom:4px">
+          <button class="btn ghost" id="a-strava">👟 Relier Strava — vos courses comptent, même app fermée</button>
+        </div>`}
 
       <div class="cust-label" style="margin:16px 0 8px">🏠 VOS PROPRIÉTÉS${ids.length ? ` (${ids.length}${S.monopolies.length ? ` · ${S.monopolies.length} monopole${S.monopolies.length > 1 ? "s" : ""}` : ""})` : ""}</div>` +
       (ids.length
@@ -2225,6 +2248,12 @@ function renderPanel() {
     });
     $("#a-collections")?.addEventListener("click", () => openPanel("collections"));
     $("#a-collect-all")?.addEventListener("click", () => { collectAll(); renderPanel(); });
+    $("#a-strava")?.addEventListener("click", stravaAskAndConnect);
+    $("#a-strava-sync")?.addEventListener("click", () => stravaSync(true));
+    $("#a-strava-off")?.addEventListener("click", () => {
+      S.strava = freshState().strava; save(); renderPanel();
+      notice("Strava délié — les km redeviennent GPS-app-ouverte uniquement.");
+    });
     c.querySelectorAll(".prop-card").forEach((row) =>
       row.addEventListener("click", () => {
         closePanel();
@@ -2796,6 +2825,112 @@ function startGPS() {
 }
 
 // ---------------------------------------------------------------------------
+// Strava — l'Adventure Sync du prototype : les activités À PIED (course,
+// marche, rando) créditent la Tournée même app fermée. Voir design §5.4 ter.
+// Prototype : le secret client vit en localStorage ; à déplacer vers une
+// Edge Function Supabase avant toute ouverture publique.
+// ---------------------------------------------------------------------------
+const STRAVA_SPORTS = new Set(["Run", "TrailRun", "VirtualRun", "Walk", "Hike"]);
+
+function stravaAskAndConnect() {
+  if (!S.strava.id || !S.strava.secret) {
+    const id = prompt("Strava — Client ID de votre app API (strava.com/settings/api) :", S.strava.id || "");
+    if (!id) return;
+    const sec = prompt("Strava — Client Secret :", "");
+    if (!sec) return;
+    S.strava.id = id.trim();
+    S.strava.secret = sec.trim();
+  }
+  saveNow(); // la page va être quittée : pas de débounce
+  const u = new URL("https://www.strava.com/oauth/authorize");
+  u.search = new URLSearchParams({
+    client_id: S.strava.id, response_type: "code",
+    redirect_uri: location.origin + location.pathname,
+    approval_prompt: "auto", scope: "activity:read_all", state: "magnat",
+  });
+  location.href = u;
+}
+
+async function stravaToken(body) {
+  const res = await fetch("https://www.strava.com/oauth/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(Object.assign(
+      { client_id: S.strava.id, client_secret: S.strava.secret }, body)),
+  });
+  if (!res.ok) throw new Error("jeton refusé (" + res.status + ")");
+  const j = await res.json();
+  S.strava.access = j.access_token;
+  S.strava.refresh = j.refresh_token;
+  S.strava.exp = j.expires_at || 0;
+  if (j.athlete) S.strava.athlete = [j.athlete.firstname, j.athlete.lastname].filter(Boolean).join(" ");
+  save();
+}
+
+let stravaBusy = false;
+async function stravaSync(manual = false) {
+  if (stravaBusy || !S.strava.refresh) return;
+  stravaBusy = true;
+  try {
+    if (S.strava.exp - 300 < Date.now() / 1000) {
+      await stravaToken({ grant_type: "refresh_token", refresh_token: S.strava.refresh });
+    }
+    // première synchro : 3 jours d'historique ; ensuite, depuis la dernière
+    const after = S.strava.lastSync || Math.floor(Date.now() / 1000) - 3 * 86400;
+    const res = await fetch(
+      `https://www.strava.com/api/v3/athlete/activities?after=${after}&per_page=50`,
+      { headers: { Authorization: "Bearer " + S.strava.access } });
+    if (!res.ok) throw new Error("activités refusées (" + res.status + ")");
+    let meters = 0, n = 0;
+    for (const a of await res.json()) {
+      if (!STRAVA_SPORTS.has(a.sport_type || a.type)) continue; // à pied uniquement
+      if (S.strava.seen.includes(a.id)) continue;
+      S.strava.seen.push(a.id);
+      meters += a.distance || 0;
+      n++;
+    }
+    if (S.strava.seen.length > 300) S.strava.seen = S.strava.seen.slice(-300);
+    S.strava.lastSync = Math.floor(Date.now() / 1000);
+    if (meters > 0) {
+      S.strava.km += meters / 1000;
+      ensureDeals(); // le dossier du jour doit exister AVANT le crédit des km
+      walkCredit(meters); // indemnités (plafond du jour) + dossiers d'Affaires
+      const km = (meters / 1000).toFixed(1);
+      journal(`LA TOURNÉE — Strava rapporte <b>${km} km</b> à pied (${n} activité${n > 1 ? "s" : ""}). Les dossiers avancent, les semelles s'usent.`);
+      headline(`<b>STRAVA SYNCHRONISÉ.</b> +${km} km de tournée créditée.`);
+    } else if (manual) {
+      notice("Strava : aucune nouvelle activité à pied.");
+    }
+    save();
+    if (panelTab === "empire") renderPanel();
+  } catch (e) {
+    if (manual) notice("Strava : " + e.message);
+  } finally {
+    stravaBusy = false;
+  }
+}
+
+// retour OAuth (?state=magnat&code=…) + resynchro au retour au premier plan
+async function stravaBoot() {
+  const q = new URLSearchParams(location.search);
+  if (q.get("state") === "magnat" && q.get("code")) {
+    history.replaceState(null, "", location.pathname);
+    try {
+      await stravaToken({ grant_type: "authorization_code", code: q.get("code") });
+      journal("LA TOURNÉE — compte <b>Strava</b> relié. Vos courses et marches créditent désormais la Tournée, même app fermée.");
+      await stravaSync(true);
+    } catch (e) {
+      notice("Strava : connexion échouée — " + e.message);
+    }
+  } else if (S.strava.refresh) {
+    stravaSync();
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && S.strava.refresh) stravaSync();
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Marqueurs
 // ---------------------------------------------------------------------------
 // Les lieux sont rendus en couches GPU natives de la carte : ancrage parfait
@@ -3034,6 +3169,15 @@ const refreshMarker = () => refreshAllMarkers();
 window.magnat = {
   speed: (s) => { speed = s || 1; toast(`⏩ ×${speed}`); },
   reset: () => { localStorage.removeItem(SAVE_KEY); location.reload(); },
+  // diagnostic Affaires/Tournée : à lire via Safari > Développement > iPhone
+  diag: () => ({
+    jour: gameDay(), dealDay: S.dealDay, slots: dealSlots(),
+    deals: JSON.parse(JSON.stringify(S.deals)),
+    walk: Object.assign({}, S.walk),
+    strava: { relie: !!S.strava.refresh, kmImportes: S.strava.km,
+              derniereSync: S.strava.lastSync ? new Date(S.strava.lastSync * 1000).toLocaleString("fr-FR") : "jamais",
+              activitesVues: S.strava.seen.length },
+  }),
   theme: () => { themeForced = themeForced === null ? !night : null; applyTheme(wantNight()); },
   mute: () => { S.muted = !S.muted; save(); },
   logout: () => sb?.auth.signOut().then(() => location.reload()),
@@ -3282,3 +3426,4 @@ $("#login-send").addEventListener("click", async () => {
 });
 
 initNet();
+stravaBoot();
